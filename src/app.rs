@@ -185,6 +185,92 @@ impl CoreBoardApp {
         self.touch();
     }
 
+    /// Items an action applies to: the selection, or everything when nothing is selected.
+    fn targets(&self) -> HashSet<u64> {
+        if self.selection.is_empty() {
+            self.board.items.iter().map(|i| i.id).collect()
+        } else {
+            self.selection.clone()
+        }
+    }
+
+    /// Rotates selected items by quarter turns (positive = clockwise) about their centers.
+    fn rotate_selection(&mut self, quarters: i32) {
+        if self.selection.is_empty() {
+            return;
+        }
+        self.checkpoint();
+        for item in &mut self.board.items {
+            if !self.selection.contains(&item.id) {
+                continue;
+            }
+            item.rotation = (item.rotation as i32 + quarters).rem_euclid(4) as u8;
+            if quarters % 2 != 0 {
+                let [w, h] = item.size;
+                item.pos = [item.pos[0] + (w - h) / 2.0, item.pos[1] + (h - w) / 2.0];
+                item.size = [h, w];
+            }
+        }
+        self.touch();
+    }
+
+    /// Packs items into rows, in reading order, starting at their current top-left corner.
+    /// With `uniform`, every item is first scaled to the median height.
+    fn arrange_grid(&mut self, uniform: bool) {
+        const GAP: f32 = 16.0;
+        let targets = self.targets();
+        let mut picked: Vec<usize> = (0..self.board.items.len())
+            .filter(|&i| targets.contains(&self.board.items[i].id))
+            .collect();
+        if picked.is_empty() {
+            return;
+        }
+        self.checkpoint();
+        let items = &mut self.board.items;
+
+        let origin = picked.iter().fold([f32::MAX, f32::MAX], |acc, &i| {
+            [acc[0].min(items[i].pos[0]), acc[1].min(items[i].pos[1])]
+        });
+        picked.sort_by(|&a, &b| {
+            let (a, b) = (&items[a], &items[b]);
+            let ay = a.pos[1] + a.size[1] / 2.0;
+            let by = b.pos[1] + b.size[1] / 2.0;
+            ay.total_cmp(&by).then(a.pos[0].total_cmp(&b.pos[0]))
+        });
+
+        if uniform {
+            let mut heights: Vec<f32> = picked.iter().map(|&i| items[i].size[1]).collect();
+            heights.sort_by(f32::total_cmp);
+            let target = heights[heights.len() / 2];
+            for &i in &picked {
+                let scale = target / items[i].size[1];
+                items[i].size = [items[i].size[0] * scale, target];
+            }
+        }
+
+        // Aim for a block with roughly the shape of a 16:10 screen.
+        let area: f32 = picked
+            .iter()
+            .map(|&i| (items[i].size[0] + GAP) * (items[i].size[1] + GAP))
+            .sum();
+        let widest = picked.iter().map(|&i| items[i].size[0]).fold(0.0, f32::max);
+        let row_width = (area * 1.6).sqrt().max(widest);
+
+        let (mut x, mut y, mut row_height) = (0.0, 0.0, 0.0_f32);
+        for &i in &picked {
+            let [w, h] = items[i].size;
+            if x > 0.0 && x + w > row_width {
+                x = 0.0;
+                y += row_height + GAP;
+                row_height = 0.0;
+            }
+            items[i].pos = [origin[0] + x, origin[1] + y];
+            x += w + GAP;
+            row_height = row_height.max(h);
+        }
+        self.touch();
+    }
+
     fn raise_selection(&mut self) {
         let (mut picked, rest): (Vec<Item>, Vec<Item>) = self
             .board
@@ -258,6 +344,7 @@ impl CoreBoardApp {
                 file,
                 pos: [cursor.x - size.x / 2.0, cursor.y - size.y / 2.0],
                 size: [size.x, size.y],
+                rotation: 0,
             });
             self.selection.insert(id);
             cursor += Vec2::splat(24.0 / zoom);
@@ -357,7 +444,7 @@ impl CoreBoardApp {
 
     // ---------------------------------------------------------------- frame
 
-    fn handle_input(&mut self, ui: &egui::Ui, canvas: Rect, response: &egui::Response) {
+    fn handle_input(&mut self, ui: &egui::Ui, canvas: Rect) {
         let ctx = ui.ctx().clone();
         let (pointer, modifiers, events, scroll, pinch, dropped) = ctx.input_mut(|i| {
             (
@@ -415,6 +502,8 @@ impl CoreBoardApp {
                         self.toast("Saved".into());
                     }
                     Key::F | Key::Home => self.fit(canvas),
+                    Key::R if !m.command => self.rotate_selection(if m.shift { -1 } else { 1 }),
+                    Key::G if !m.command => self.arrange_grid(m.shift),
                     Key::Num1 if !m.command => self.zoom_around(canvas, anchor, 1.0),
                     Key::H | Key::F1 => self.show_help = !self.show_help,
                     Key::Escape => self.selection.clear(),
@@ -435,13 +524,22 @@ impl CoreBoardApp {
             }
         }
 
-        // Pointer presses start a drag mode.
-        if let (Some(pos), true) = (pointer.press_origin(), response.is_pointer_button_down_on())
+        // Pointer presses start a drag mode. Read from raw events rather than pointer state,
+        // which forgets a press released within the same frame (a quick click or trackpad tap).
+        let press = events.iter().find_map(|e| match e {
+            Event::PointerButton {
+                pos,
+                button,
+                pressed: true,
+                ..
+            } if canvas.contains(*pos) => Some((*pos, *button)),
+            _ => None,
+        });
+        if let Some((pos, button)) = press
             && matches!(self.drag, Drag::None)
-            && pointer.any_pressed()
         {
             let space = ctx.input(|i| i.key_down(Key::Space));
-            self.drag = if pointer.middle_down() || pointer.secondary_down() || space {
+            self.drag = if button != egui::PointerButton::Primary || space {
                 Drag::Pan
             } else if let Some(id) = self.hit_handle(canvas, pos) {
                 let item = self.board.items.iter().find(|i| i.id == id).unwrap();
@@ -474,8 +572,12 @@ impl CoreBoardApp {
             };
         }
 
-        // Continue the drag.
-        let delta = pointer.delta();
+        // Continue the drag. Motion in the press frame happened before the press, so skip it.
+        let delta = if press.is_some() {
+            Vec2::ZERO
+        } else {
+            pointer.delta()
+        };
         let zoom = self.board.view.zoom;
         match &mut self.drag {
             Drag::None | Drag::Marquee { .. } => {}
@@ -579,7 +681,11 @@ impl CoreBoardApp {
             }
             match self.texture(&ctx, &item.file) {
                 Texture::Ready(tex) => {
-                    painter.image(tex.id(), rect, uv, Color32::WHITE);
+                    if item.rotation == 0 {
+                        painter.image(tex.id(), rect, uv, Color32::WHITE);
+                    } else {
+                        painter.add(rotated_image(tex.id(), rect, item.rotation));
+                    }
                 }
                 Texture::Loading => {
                     painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(50));
@@ -673,6 +779,8 @@ impl CoreBoardApp {
                         Drag empty space       box select\n\
                         Shift+click            toggle select\n\
                         Corner handle          resize\n\
+                        R / Shift+R            rotate 90° cw / ccw\n\
+                        G / Shift+G            grid arrange / same height\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -712,12 +820,13 @@ impl eframe::App for CoreBoardApp {
         self.receive_textures(&ctx);
 
         let canvas = ui.max_rect();
-        let response = ui.interact(
+        // Claim the pointer so egui treats the whole window as one draggable surface.
+        ui.interact(
             canvas,
             ui.scope_id().with("canvas"),
             Sense::click_and_drag(),
         );
-        self.handle_input(ui, canvas, &response);
+        self.handle_input(ui, canvas);
         self.paint(ui, canvas);
 
         let closing = ctx.input(|i| i.viewport().close_requested());
@@ -733,6 +842,33 @@ impl eframe::App for CoreBoardApp {
             }
         }
     }
+}
+
+/// An image quad whose texture is turned by `quarters` clockwise quarter turns.
+fn rotated_image(texture: egui::TextureId, rect: Rect, quarters: u8) -> egui::Shape {
+    let corners = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ];
+    let uvs = [
+        pos2(0.0, 0.0),
+        pos2(1.0, 0.0),
+        pos2(1.0, 1.0),
+        pos2(0.0, 1.0),
+    ];
+    let mut mesh = egui::Mesh::with_texture(texture);
+    for (i, pos) in corners.into_iter().enumerate() {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: uvs[(i + 4 - quarters as usize) % 4],
+            color: Color32::WHITE,
+        });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    egui::Shape::mesh(mesh)
 }
 
 fn image_dimensions(bytes: &[u8]) -> image::ImageResult<(u32, u32)> {

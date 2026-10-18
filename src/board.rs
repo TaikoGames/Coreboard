@@ -17,8 +17,11 @@ pub struct Item {
     pub file: String,
     /// Top-left corner in world coordinates.
     pub pos: [f32; 2],
-    /// Displayed size in world units.
+    /// Displayed size in world units (already swapped for quarter-turn rotations).
     pub size: [f32; 2],
+    /// Clockwise quarter turns, 0..=3.
+    #[serde(default)]
+    pub rotation: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

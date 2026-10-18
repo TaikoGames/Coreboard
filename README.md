@@ -24,6 +24,8 @@ The default board lives in your platform's data dir
 | Select | Click; **Shift/Ctrl+click** to toggle; drag on empty space to box-select |
 | Move | Drag selected images |
 | Resize | Drag the corner handle (keeps aspect ratio) |
+| Rotate | **R** / **Shift+R** (90° clockwise / counter-clockwise) |
+| Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
 | Fit to view | **F** (fits selection, or everything) |
