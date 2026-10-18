@@ -27,6 +27,8 @@ The default board lives in your platform's data dir
 | Rotate | **R** / **Shift+R** (90° clockwise / counter-clockwise) |
 | Flip horizontal | **M** (mirror) |
 | Grayscale | **B** (black & white, toggles) |
+| Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
+| Always on top | **T** (toggles) |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
@@ -47,6 +49,12 @@ images/      # a copy of every image, named by content hash (duplicates are stor
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Overlay mode
+
+Lower the opacity with **[** and press **T** to keep the board floating above other apps, e.g. to
+trace or match colors against reference while you work. Both settings are saved with the board.
+On Linux, see-through windows need a compositing desktop (GNOME, KDE and most others have one).
 
 ## Linux build notes
 

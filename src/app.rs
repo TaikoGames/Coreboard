@@ -51,6 +51,8 @@ pub struct CoreBoardApp {
     dirty_since: Option<Instant>,
     toast: Option<(String, Instant)>,
     show_help: bool,
+    /// The OS window level is sent once on startup, then on each toggle.
+    window_level_sent: bool,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -72,6 +74,7 @@ impl CoreBoardApp {
             dirty_since: None,
             toast: None,
             show_help,
+            window_level_sent: false,
             clipboard: arboard::Clipboard::new().ok(),
         }
     }
@@ -536,6 +539,21 @@ impl CoreBoardApp {
                     Key::G if !m.command => self.arrange_grid(m.shift),
                     Key::M if !m.command => self.toggle_selection(|i| &mut i.flip_x),
                     Key::B if !m.command => self.toggle_selection(|i| &mut i.grayscale),
+                    Key::T if !m.command => {
+                        let on = !self.board.window.always_on_top;
+                        self.board.window.always_on_top = on;
+                        self.window_level_sent = false;
+                        self.toast(format!("Always on top: {}", if on { "on" } else { "off" }));
+                        self.touch();
+                    }
+                    Key::OpenBracket | Key::CloseBracket => {
+                        let step = if *key == Key::OpenBracket { -0.1 } else { 0.1 };
+                        // Round to whole steps so repeated presses land on 10%, 20%, ...
+                        let opacity = ((self.board.window.opacity + step) * 10.0).round() / 10.0;
+                        self.board.window.opacity = opacity.clamp(0.1, 1.0);
+                        self.toast(format!("Opacity {:.0}%", self.board.window.opacity * 100.0));
+                        self.touch();
+                    }
                     Key::Num1 if !m.command => self.zoom_around(canvas, anchor, 1.0),
                     Key::H | Key::F1 => self.show_help = !self.show_help,
                     Key::Escape => self.selection.clear(),
@@ -682,7 +700,10 @@ impl CoreBoardApp {
     fn paint(&mut self, ui: &egui::Ui, canvas: Rect) {
         let ctx = ui.ctx().clone();
         let painter = ui.painter_at(canvas);
-        painter.rect_filled(canvas, CornerRadius::ZERO, BG);
+        // Opacity fades the board itself; labels and overlays stay fully readable.
+        let opacity = self.board.window.opacity;
+        let tint = Color32::WHITE.gamma_multiply(opacity);
+        painter.rect_filled(canvas, CornerRadius::ZERO, BG.gamma_multiply(opacity));
 
         // Dot grid, skipped when it would be too dense to read.
         let zoom = self.board.view.zoom;
@@ -697,7 +718,7 @@ impl CoreBoardApp {
         while x < canvas.max.x {
             let mut y = start_y;
             while y < canvas.max.y {
-                painter.circle_filled(pos2(x, y), 1.2, GRID);
+                painter.circle_filled(pos2(x, y), 1.2, GRID.gamma_multiply(opacity));
                 y += step;
             }
             x += step;
@@ -714,18 +735,23 @@ impl CoreBoardApp {
             match self.texture(&ctx, &item.file, item.grayscale) {
                 Texture::Ready(tex) => {
                     if item.rotation == 0 && !item.flip_x {
-                        painter.image(tex.id(), rect, uv, Color32::WHITE);
+                        painter.image(tex.id(), rect, uv, tint);
                     } else {
                         painter.add(transformed_image(
                             tex.id(),
                             rect,
                             item.rotation,
                             item.flip_x,
+                            tint,
                         ));
                     }
                 }
                 Texture::Loading => {
-                    painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(50));
+                    painter.rect_filled(
+                        rect,
+                        CornerRadius::ZERO,
+                        Color32::from_gray(50).gamma_multiply(opacity),
+                    );
                 }
                 Texture::Failed(err) => {
                     painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(70, 30, 30));
@@ -792,9 +818,19 @@ impl CoreBoardApp {
 
         // Status line.
         let status = format!(
-            "{:.0}%  ·  {} images{}",
+            "{:.0}%  ·  {} images{}{}{}",
             zoom * 100.0,
             self.board.items.len(),
+            if opacity < 1.0 {
+                format!("  ·  opacity {:.0}%", opacity * 100.0)
+            } else {
+                String::new()
+            },
+            if self.board.window.always_on_top {
+                "  ·  on top"
+            } else {
+                ""
+            },
             if self.selection.is_empty() {
                 String::new()
             } else {
@@ -820,6 +856,8 @@ impl CoreBoardApp {
                         G / Shift+G            grid arrange / same height\n\
                         M                      mirror (flip horizontal)\n\
                         B                      black & white\n\
+                        [ / ]                  window opacity\n\
+                        T                      always on top\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -854,6 +892,11 @@ impl CoreBoardApp {
 }
 
 impl eframe::App for CoreBoardApp {
+    /// Fully clear, so the board background alone decides how much desktop shows through.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive_textures(&ctx);
@@ -867,6 +910,16 @@ impl eframe::App for CoreBoardApp {
         );
         self.handle_input(ui, canvas);
         self.paint(ui, canvas);
+
+        if !self.window_level_sent {
+            let level = if self.board.window.always_on_top {
+                egui::WindowLevel::AlwaysOnTop
+            } else {
+                egui::WindowLevel::Normal
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+            self.window_level_sent = true;
+        }
 
         let closing = ctx.input(|i| i.viewport().close_requested());
         if closing {
@@ -890,6 +943,7 @@ fn transformed_image(
     rect: Rect,
     quarters: u8,
     flip_x: bool,
+    tint: Color32,
 ) -> egui::Shape {
     let corners = [
         rect.left_top(),
@@ -910,7 +964,7 @@ fn transformed_image(
         mesh.vertices.push(egui::epaint::Vertex {
             pos,
             uv: uvs[(source + 4 - quarters as usize) % 4],
-            color: Color32::WHITE,
+            color: tint,
         });
     }
     mesh.add_triangle(0, 1, 2);

@@ -21,7 +21,9 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!("Core Board — {}", dir.display()))
             .with_inner_size([1280.0, 800.0])
-            .with_drag_and_drop(true),
+            .with_drag_and_drop(true)
+            // Lets the board's opacity setting show the desktop through the window.
+            .with_transparent(true),
         ..Default::default()
     };
 

@@ -44,12 +44,31 @@ impl Default for View {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowSettings {
+    /// 0.1..=1.0; below 1.0 the desktop shows through the board.
+    pub opacity: f32,
+    pub always_on_top: bool,
+}
+
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            opacity: 1.0,
+            always_on_top: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Board {
     /// Draw order: later items are on top.
     pub items: Vec<Item>,
     pub view: View,
     pub next_id: u64,
+    #[serde(default)]
+    pub window: WindowSettings,
 }
 
 pub struct Store {
