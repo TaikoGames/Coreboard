@@ -204,12 +204,34 @@ impl CoreBoardApp {
             if !self.selection.contains(&item.id) {
                 continue;
             }
-            item.rotation = (item.rotation as i32 + quarters).rem_euclid(4) as u8;
+            // Rotation is applied before the flip, so mirrored images turn the other way.
+            let turn = if item.flip_x { -quarters } else { quarters };
+            item.rotation = (item.rotation as i32 + turn).rem_euclid(4) as u8;
             if quarters % 2 != 0 {
                 let [w, h] = item.size;
                 item.pos = [item.pos[0] + (w - h) / 2.0, item.pos[1] + (h - w) / 2.0];
                 item.size = [h, w];
             }
+        }
+        self.touch();
+    }
+
+    /// Sets `flag` on every selected item, or clears it if all of them already have it.
+    fn toggle_selection(&mut self, flag: fn(&mut Item) -> &mut bool) {
+        if self.selection.is_empty() {
+            return;
+        }
+        self.checkpoint();
+        let selection = &self.selection;
+        let mut picked: Vec<&mut Item> = self
+            .board
+            .items
+            .iter_mut()
+            .filter(|i| selection.contains(&i.id))
+            .collect();
+        let all_on = picked.iter_mut().all(|i| *flag(i));
+        for item in picked {
+            *flag(item) = !all_on;
         }
         self.touch();
     }
@@ -345,6 +367,8 @@ impl CoreBoardApp {
                 pos: [cursor.x - size.x / 2.0, cursor.y - size.y / 2.0],
                 size: [size.x, size.y],
                 rotation: 0,
+                flip_x: false,
+                grayscale: false,
             });
             self.selection.insert(id);
             cursor += Vec2::splat(24.0 / zoom);
@@ -404,19 +428,25 @@ impl CoreBoardApp {
 
     // ---------------------------------------------------------------- textures
 
-    fn texture(&mut self, ctx: &egui::Context, file: &str) -> &Texture {
-        if !self.textures.contains_key(file) {
-            self.textures.insert(file.to_string(), Texture::Loading);
+    /// Grayscale gets its own texture so toggling it back and forth is instant.
+    fn texture(&mut self, ctx: &egui::Context, file: &str, grayscale: bool) -> &Texture {
+        let key = if grayscale {
+            format!("{file}#gray")
+        } else {
+            file.to_string()
+        };
+        if !self.textures.contains_key(&key) {
+            self.textures.insert(key.clone(), Texture::Loading);
             let path = self.store.image_path(file);
             let tx = self.decoded_tx.clone();
             let ctx = ctx.clone();
-            let file = file.to_string();
+            let key = key.clone();
             std::thread::spawn(move || {
-                let _ = tx.send((file, decode(&path)));
+                let _ = tx.send((key, decode(&path, grayscale)));
                 ctx.request_repaint();
             });
         }
-        &self.textures[file]
+        &self.textures[&key]
     }
 
     fn receive_textures(&mut self, ctx: &egui::Context) {
@@ -504,6 +534,8 @@ impl CoreBoardApp {
                     Key::F | Key::Home => self.fit(canvas),
                     Key::R if !m.command => self.rotate_selection(if m.shift { -1 } else { 1 }),
                     Key::G if !m.command => self.arrange_grid(m.shift),
+                    Key::M if !m.command => self.toggle_selection(|i| &mut i.flip_x),
+                    Key::B if !m.command => self.toggle_selection(|i| &mut i.grayscale),
                     Key::Num1 if !m.command => self.zoom_around(canvas, anchor, 1.0),
                     Key::H | Key::F1 => self.show_help = !self.show_help,
                     Key::Escape => self.selection.clear(),
@@ -679,12 +711,17 @@ impl CoreBoardApp {
             if !rect.intersects(canvas) {
                 continue;
             }
-            match self.texture(&ctx, &item.file) {
+            match self.texture(&ctx, &item.file, item.grayscale) {
                 Texture::Ready(tex) => {
-                    if item.rotation == 0 {
+                    if item.rotation == 0 && !item.flip_x {
                         painter.image(tex.id(), rect, uv, Color32::WHITE);
                     } else {
-                        painter.add(rotated_image(tex.id(), rect, item.rotation));
+                        painter.add(transformed_image(
+                            tex.id(),
+                            rect,
+                            item.rotation,
+                            item.flip_x,
+                        ));
                     }
                 }
                 Texture::Loading => {
@@ -781,6 +818,8 @@ impl CoreBoardApp {
                         Corner handle          resize\n\
                         R / Shift+R            rotate 90° cw / ccw\n\
                         G / Shift+G            grid arrange / same height\n\
+                        M                      mirror (flip horizontal)\n\
+                        B                      black & white\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -844,8 +883,14 @@ impl eframe::App for CoreBoardApp {
     }
 }
 
-/// An image quad whose texture is turned by `quarters` clockwise quarter turns.
-fn rotated_image(texture: egui::TextureId, rect: Rect, quarters: u8) -> egui::Shape {
+/// An image quad whose texture is turned by `quarters` clockwise quarter turns,
+/// then optionally mirrored left-to-right.
+fn transformed_image(
+    texture: egui::TextureId,
+    rect: Rect,
+    quarters: u8,
+    flip_x: bool,
+) -> egui::Shape {
     let corners = [
         rect.left_top(),
         rect.right_top(),
@@ -860,9 +905,11 @@ fn rotated_image(texture: egui::TextureId, rect: Rect, quarters: u8) -> egui::Sh
     ];
     let mut mesh = egui::Mesh::with_texture(texture);
     for (i, pos) in corners.into_iter().enumerate() {
+        // Mirroring swaps left and right corners: 0<->1 (top), 2<->3 (bottom).
+        let source = if flip_x { i ^ 1 } else { i };
         mesh.vertices.push(egui::epaint::Vertex {
             pos,
-            uv: uvs[(i + 4 - quarters as usize) % 4],
+            uv: uvs[(source + 4 - quarters as usize) % 4],
             color: Color32::WHITE,
         });
     }
@@ -877,11 +924,14 @@ fn image_dimensions(bytes: &[u8]) -> image::ImageResult<(u32, u32)> {
         .into_dimensions()
 }
 
-fn decode(path: &Path) -> Result<ColorImage, String> {
+fn decode(path: &Path, grayscale: bool) -> Result<ColorImage, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let mut img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     if img.width().max(img.height()) > MAX_TEXTURE_SIDE {
         img = img.thumbnail(MAX_TEXTURE_SIDE, MAX_TEXTURE_SIDE);
+    }
+    if grayscale {
+        img = img.grayscale();
     }
     let rgba = img.to_rgba8();
     let size = [rgba.width() as usize, rgba.height() as usize];

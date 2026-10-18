@@ -22,6 +22,11 @@ pub struct Item {
     /// Clockwise quarter turns, 0..=3.
     #[serde(default)]
     pub rotation: u8,
+    /// Mirrored left-to-right on screen, applied after `rotation`.
+    #[serde(default)]
+    pub flip_x: bool,
+    #[serde(default)]
+    pub grayscale: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
