@@ -8,9 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 use image::imageops::{self, FilterType};
-use image::{Rgba, RgbaImage};
+use image::{DynamicImage, Rgba, RgbaImage};
 
 use crate::board::{Item, Watermark, WatermarkPosition};
+use crate::filters::{self, Filter};
 
 /// Exports larger than this on either side are scaled down to fit.
 const MAX_SIDE: f32 = 8192.0;
@@ -55,10 +56,8 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
 
     for item in items {
         let path = images_dir.join(&item.file);
-        let mut img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
-        if item.grayscale {
-            img = img.grayscale();
-        }
+        let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
+        let mut img = DynamicImage::ImageRgba8(filters::apply(img, Filter::for_item(item)));
         img = match item.rotation % 4 {
             1 => img.rotate90(),
             2 => img.rotate180(),

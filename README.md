@@ -30,6 +30,9 @@ The default board lives in your platform's data dir
 | Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
 | Always on top | **T** (toggles) |
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
+| Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
+| Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
+| Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
@@ -51,6 +54,29 @@ exports/     # PNGs made with Ctrl+E
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Study tools
+
+For painting and drawing reference. Select images, then:
+
+- **V** steps through study views (**Shift+V** goes back). Each one is per image:
+  - **Values: 3 / 5 tones**: lightness grouped into a few flat tones, like a notan study, to
+    check the value structure.
+  - **Saturation map**: white where color is most saturated, black where it's gray.
+  - **Noise / detail map**: bright where fine detail is busy, dark where the image rests. Good for
+    spotting noisy areas versus calm ones.
+  - **Squint**: a heavy blur that shows only the big shapes.
+- **B** desaturates (plain grayscale).
+- **C** cycles composition templates drawn over the image: rule of thirds, phi grid, golden spiral,
+  diagonals with reciprocals (dynamic symmetry) and center cross. **Shift+C** turns the spiral to
+  each corner.
+- **I** toggles the color picker. Hover any image to read its hex color, hue/saturation/value, and
+  perceptual value (CIE L*, 0 = black, 100 = white). It always reads the original colors, even
+  when the image is shown in a study view.
+
+Values use CIE L* lightness, so the tone bands match how light or dark colors actually look
+(a pure yellow and a pure blue have the same HSV value but very different L*). Study views are
+saved with the board and included in PNG exports; guides are on-screen only.
 
 ## Export with watermark
 

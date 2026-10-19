@@ -1,6 +1,7 @@
 mod app;
 mod board;
 mod export;
+mod filters;
 
 use std::path::PathBuf;
 

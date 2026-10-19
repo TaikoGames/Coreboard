@@ -8,8 +8,9 @@ use eframe::egui::{
     StrokeKind, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 
-use crate::board::{self, Board, Item, Store, WatermarkPosition};
+use crate::board::{self, Analysis, Board, Guide, Item, Store, WatermarkPosition};
 use crate::export;
+use crate::filters::{self, Filter};
 
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 50.0;
@@ -29,7 +30,14 @@ enum Texture {
     Failed(String),
 }
 
-type Decoded = (String, Result<ColorImage, String>);
+/// (texture key, file, decoded texture + for plain textures a small copy for color picking)
+type Decoded = (
+    String,
+    String,
+    Result<(ColorImage, Option<image::RgbaImage>), String>,
+);
+/// Color picking reads from copies this size, which is plenty for a single pixel readout.
+const SAMPLE_SIDE: u32 = 1024;
 type Exported = Result<std::path::PathBuf, String>;
 
 enum Drag {
@@ -52,6 +60,9 @@ pub struct CoreBoardApp {
     redo: Vec<Vec<Item>>,
     dirty_since: Option<Instant>,
     toast: Option<(String, Instant)>,
+    /// Small CPU copies of images for the color picker, by file name.
+    samples: HashMap<String, image::RgbaImage>,
+    picker: bool,
     show_help: bool,
     /// The OS window level is sent once on startup, then on each toggle.
     window_level_sent: bool,
@@ -80,6 +91,8 @@ impl CoreBoardApp {
             redo: Vec::new(),
             dirty_since: None,
             toast: None,
+            samples: HashMap::new(),
+            picker: false,
             show_help,
             window_level_sent: false,
             show_export: false,
@@ -250,6 +263,120 @@ impl CoreBoardApp {
         self.touch();
     }
 
+    /// Steps the study view of the selection, starting from the first selected item's view.
+    fn cycle_analysis(&mut self, forward: bool) {
+        let Some(current) = self.first_selected().map(|i| i.analysis) else {
+            self.toast("Select images first".into());
+            return;
+        };
+        let next = board::cycle(&Analysis::CYCLE, current, forward);
+        self.set_on_selection(|i| i.analysis = next);
+        self.toast(next.label().into());
+    }
+
+    fn cycle_guide(&mut self) {
+        let Some(current) = self.first_selected().map(|i| i.guide) else {
+            self.toast("Select images first".into());
+            return;
+        };
+        let next = board::cycle(&Guide::CYCLE, current, true);
+        self.set_on_selection(|i| i.guide = next);
+        self.toast(next.label().into());
+    }
+
+    fn turn_spiral(&mut self) {
+        if self.first_selected().is_none() {
+            self.toast("Select images first".into());
+            return;
+        }
+        self.set_on_selection(|i| {
+            i.guide = Guide::GoldenSpiral;
+            i.guide_orientation = (i.guide_orientation + 1) % 4;
+        });
+        self.toast("Golden spiral turned".into());
+    }
+
+    fn first_selected(&self) -> Option<&Item> {
+        self.board
+            .items
+            .iter()
+            .find(|i| self.selection.contains(&i.id))
+    }
+
+    fn set_on_selection(&mut self, f: impl Fn(&mut Item)) {
+        self.checkpoint();
+        for item in &mut self.board.items {
+            if self.selection.contains(&item.id) {
+                f(item);
+            }
+        }
+        self.touch();
+    }
+
+    /// Original color under `pos`, mapped back through the item's rotation and flip.
+    fn sample_at(&self, canvas: Rect, pos: Pos2) -> Option<[u8; 3]> {
+        let id = self.hit(canvas, pos)?;
+        let item = self.board.items.iter().find(|i| i.id == id)?;
+        let sample = self.samples.get(&item.file)?;
+        let rect = self.item_screen_rect(canvas, item);
+        let mut s = ((pos - rect.min) / rect.size()).to_pos2();
+        if item.flip_x {
+            s.x = 1.0 - s.x;
+        }
+        let (u, v) = match item.rotation % 4 {
+            1 => (s.y, 1.0 - s.x),
+            2 => (1.0 - s.x, 1.0 - s.y),
+            3 => (1.0 - s.y, s.x),
+            _ => (s.x, s.y),
+        };
+        let x = ((u * sample.width() as f32) as u32).min(sample.width() - 1);
+        let y = ((v * sample.height() as f32) as u32).min(sample.height() - 1);
+        let [r, g, b, _] = sample.get_pixel(x, y).0;
+        Some([r, g, b])
+    }
+
+    fn paint_picker(&self, painter: &egui::Painter, canvas: Rect, pos: Pos2) {
+        let Some([r, g, b]) = self.sample_at(canvas, pos) else {
+            return;
+        };
+        let (h, s, v) = filters::hsv(r, g, b);
+        let l = filters::lightness(r, g, b);
+        let text = format!(
+            "#{r:02X}{g:02X}{b:02X}\nH {h:.0}°  S {:.0}%  V {:.0}%\nValue (L*) {l:.0}",
+            s * 100.0,
+            v * 100.0
+        );
+        let galley = painter.layout_no_wrap(text, FontId::monospace(13.0), Color32::WHITE);
+        let swatch = Vec2::splat(galley.size().y);
+        let size = vec2(swatch.x + 8.0 + galley.size().x, galley.size().y);
+        // Sit below-right of the cursor, flipping inward near the canvas edges.
+        let mut min = pos + vec2(18.0, 18.0);
+        if min.x + size.x + 10.0 > canvas.max.x {
+            min.x = pos.x - 18.0 - size.x;
+        }
+        if min.y + size.y + 10.0 > canvas.max.y {
+            min.y = pos.y - 18.0 - size.y;
+        }
+        let bg = Rect::from_min_size(min, size).expand(8.0);
+        painter.rect_filled(bg, CornerRadius::same(6), Color32::from_black_alpha(220));
+        let swatch_rect = Rect::from_min_size(min, swatch);
+        painter.rect_filled(
+            swatch_rect,
+            CornerRadius::same(3),
+            Color32::from_rgb(r, g, b),
+        );
+        painter.rect_stroke(
+            swatch_rect,
+            CornerRadius::same(3),
+            Stroke::new(1.0, Color32::from_gray(160)),
+            StrokeKind::Outside,
+        );
+        painter.galley(min + vec2(swatch.x + 8.0, 0.0), galley, Color32::WHITE);
+        // Small ring marking the exact pixel.
+        painter.circle_stroke(pos, 5.0, Stroke::new(3.0, Color32::BLACK));
+        painter.circle_stroke(pos, 5.0, Stroke::new(1.5, Color32::WHITE));
+    }
+
     /// Packs items into rows, in reading order, starting at their current top-left corner.
     /// With `uniform`, every item is first scaled to the median height.
     fn arrange_grid(&mut self, uniform: bool) {
@@ -383,6 +510,9 @@ impl CoreBoardApp {
                 rotation: 0,
                 flip_x: false,
                 grayscale: false,
+                analysis: Analysis::None,
+                guide: Guide::None,
+                guide_orientation: 0,
             });
             self.selection.insert(id);
             cursor += Vec2::splat(24.0 / zoom);
@@ -442,21 +572,17 @@ impl CoreBoardApp {
 
     // ---------------------------------------------------------------- textures
 
-    /// Grayscale gets its own texture so toggling it back and forth is instant.
-    fn texture(&mut self, ctx: &egui::Context, file: &str, grayscale: bool) -> &Texture {
-        let key = if grayscale {
-            format!("{file}#gray")
-        } else {
-            file.to_string()
-        };
+    /// Each filter gets its own cached texture, so switching views back and forth is instant.
+    fn texture(&mut self, ctx: &egui::Context, file: &str, filter: Filter) -> &Texture {
+        let key = filter.key(file);
         if !self.textures.contains_key(&key) {
             self.textures.insert(key.clone(), Texture::Loading);
             let path = self.store.image_path(file);
             let tx = self.decoded_tx.clone();
             let ctx = ctx.clone();
-            let key = key.clone();
+            let (key, file) = (key.clone(), file.to_string());
             std::thread::spawn(move || {
-                let _ = tx.send((key, decode(&path, grayscale)));
+                let _ = tx.send((key, file, decode(&path, filter)));
                 ctx.request_repaint();
             });
         }
@@ -468,12 +594,17 @@ impl CoreBoardApp {
             mipmap_mode: Some(egui::TextureFilter::Linear),
             ..TextureOptions::LINEAR
         };
-        while let Ok((file, result)) = self.decoded_rx.try_recv() {
+        while let Ok((key, file, result)) = self.decoded_rx.try_recv() {
             let tex = match result {
-                Ok(img) => Texture::Ready(ctx.load_texture(&file, img, options)),
+                Ok((img, sample)) => {
+                    if let Some(sample) = sample {
+                        self.samples.insert(file, sample);
+                    }
+                    Texture::Ready(ctx.load_texture(&key, img, options))
+                }
                 Err(err) => Texture::Failed(err),
             };
-            self.textures.insert(file, tex);
+            self.textures.insert(key, tex);
         }
     }
 
@@ -665,6 +796,18 @@ impl CoreBoardApp {
                     Key::G if !m.command => self.arrange_grid(m.shift),
                     Key::M if !m.command => self.toggle_selection(|i| &mut i.flip_x),
                     Key::B if !m.command => self.toggle_selection(|i| &mut i.grayscale),
+                    Key::V if !m.command => self.cycle_analysis(!m.shift),
+                    Key::C if !m.command && m.shift => self.turn_spiral(),
+                    Key::C if !m.command => self.cycle_guide(),
+                    Key::I if !m.command => {
+                        self.picker = !self.picker;
+                        let state = if self.picker {
+                            "on: hover an image"
+                        } else {
+                            "off"
+                        };
+                        self.toast(format!("Color picker {state}"));
+                    }
                     Key::T if !m.command => {
                         let on = !self.board.window.always_on_top;
                         self.board.window.always_on_top = on;
@@ -858,7 +1001,11 @@ impl CoreBoardApp {
             if !rect.intersects(canvas) {
                 continue;
             }
-            match self.texture(&ctx, &item.file, item.grayscale) {
+            if self.picker {
+                // The picker reads original colors, whatever view the image is shown in.
+                self.texture(&ctx, &item.file, Filter::Plain);
+            }
+            match self.texture(&ctx, &item.file, Filter::for_item(item)) {
                 Texture::Ready(tex) => {
                     if item.rotation == 0 && !item.flip_x {
                         painter.image(tex.id(), rect, uv, tint);
@@ -890,6 +1037,9 @@ impl CoreBoardApp {
                     );
                 }
             }
+            if item.guide != Guide::None {
+                draw_guide(&painter, rect, item.guide, item.guide_orientation);
+            }
             if self.selection.contains(&item.id) {
                 // Dark halo keeps the outline visible on images of any color.
                 painter.rect_stroke(
@@ -906,6 +1056,12 @@ impl CoreBoardApp {
                 );
                 painter.rect_filled(Self::handle_rect(rect), CornerRadius::same(2), ACCENT);
             }
+        }
+
+        if self.picker
+            && let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+        {
+            self.paint_picker(&painter, canvas, pos);
         }
 
         // Marquee.
@@ -985,6 +1141,9 @@ impl CoreBoardApp {
                         [ / ]                  window opacity\n\
                         T                      always on top\n\
                         Ctrl+E                 export PNG (+ watermark)\n\
+                        V / Shift+V            value, saturation, noise, squint\n\
+                        C / Shift+C            composition guide / turn spiral\n\
+                        I                      color picker (HSV + value)\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -1104,22 +1263,203 @@ fn transformed_image(
     egui::Shape::mesh(mesh)
 }
 
+/// Draws a composition template over an image, light lines on a dark edge so they read
+/// on any picture.
+fn draw_guide(painter: &egui::Painter, rect: Rect, guide: Guide, orientation: u8) {
+    let at = |fx: f32, fy: f32| rect.min + vec2(fx * rect.width(), fy * rect.height());
+    let mut lines: Vec<Vec<Pos2>> = Vec::new();
+    let mut grid = |f: f32| {
+        lines.push(vec![at(f, 0.0), at(f, 1.0)]);
+        lines.push(vec![at(0.0, f), at(1.0, f)]);
+    };
+    match guide {
+        Guide::None => return,
+        Guide::Thirds => {
+            grid(1.0 / 3.0);
+            grid(2.0 / 3.0);
+        }
+        Guide::PhiGrid => {
+            let phi = (1.0 + 5f32.sqrt()) / 2.0;
+            grid(1.0 / (1.0 + phi));
+            grid(phi / (1.0 + phi));
+        }
+        Guide::Center => {
+            grid(0.5);
+        }
+        Guide::Diagonals => {
+            let (w, h) = (rect.width(), rect.height());
+            let [tl, tr, br, bl] = [
+                rect.left_top(),
+                rect.right_top(),
+                rect.right_bottom(),
+                rect.left_bottom(),
+            ];
+            lines.push(vec![tl, br]);
+            lines.push(vec![tr, bl]);
+            // Reciprocals: from each corner, perpendicular to the diagonal that misses it.
+            for (corner, dir) in [
+                (tr, vec2(-h, w)),
+                (bl, vec2(h, -w)),
+                (tl, vec2(h, w)),
+                (br, vec2(-h, -w)),
+            ] {
+                lines.push(vec![corner, ray_to_edge(rect, corner, dir)]);
+            }
+        }
+        Guide::GoldenSpiral => lines = golden_spiral(rect, orientation),
+    }
+    for line in &lines {
+        painter.add(egui::Shape::line(
+            line.clone(),
+            Stroke::new(3.0, Color32::from_black_alpha(140)),
+        ));
+    }
+    for line in lines {
+        painter.add(egui::Shape::line(
+            line,
+            Stroke::new(1.2, Color32::from_white_alpha(220)),
+        ));
+    }
+}
+
+/// Where a ray from `origin` (on the rect's border) in `dir` leaves the rect.
+fn ray_to_edge(rect: Rect, origin: Pos2, dir: Vec2) -> Pos2 {
+    let mut t = f32::MAX;
+    for (d, lo, hi, o) in [
+        (dir.x, rect.min.x, rect.max.x, origin.x),
+        (dir.y, rect.min.y, rect.max.y, origin.y),
+    ] {
+        if d > 0.0 {
+            t = t.min((hi - o) / d);
+        } else if d < 0.0 {
+            t = t.min((lo - o) / d);
+        }
+    }
+    origin + dir * t
+}
+
+/// The golden spiral and its square divisions, stretched to fit `rect`. `orientation`
+/// mirrors it into each of the four corners.
+fn golden_spiral(rect: Rect, orientation: u8) -> Vec<Vec<Pos2>> {
+    let phi = (1.0 + 5f32.sqrt()) / 2.0;
+    // Build in a phi x 1 landscape rectangle, cutting squares off left, top, right, bottom.
+    let (mut x, mut y, mut w, mut h) = (0.0f32, 0.0f32, phi, 1.0f32);
+    let mut arcs: Vec<Vec<(f32, f32)>> = Vec::new();
+    for k in 0..10 {
+        let (center, from, to, cut) = match k % 4 {
+            0 => {
+                let s = h;
+                (
+                    (x + s, y + s),
+                    (x, y + s),
+                    (x + s, y),
+                    [(x + s, y), (x + s, y + h)],
+                )
+            }
+            1 => {
+                let s = w;
+                (
+                    (x, y + s),
+                    (x, y),
+                    (x + s, y + s),
+                    [(x, y + s), (x + w, y + s)],
+                )
+            }
+            2 => {
+                let s = h;
+                (
+                    (x + w - s, y),
+                    (x + w, y),
+                    (x + w - s, y + s),
+                    [(x + w - s, y), (x + w - s, y + h)],
+                )
+            }
+            _ => {
+                let s = w;
+                (
+                    (x + s, y + h - s),
+                    (x + s, y + h),
+                    (x, y + h - s),
+                    [(x, y + h - s), (x + w, y + h - s)],
+                )
+            }
+        };
+        arcs.push(cut.to_vec());
+        let r = h.min(w);
+        let a0 = (from.1 - center.1).atan2(from.0 - center.0);
+        let a1 = (to.1 - center.1).atan2(to.0 - center.0);
+        let mut sweep = a1 - a0;
+        if sweep > std::f32::consts::PI {
+            sweep -= std::f32::consts::TAU;
+        } else if sweep < -std::f32::consts::PI {
+            sweep += std::f32::consts::TAU;
+        }
+        arcs.push(
+            (0..=16)
+                .map(|i| {
+                    let a = a0 + sweep * i as f32 / 16.0;
+                    (center.0 + r * a.cos(), center.1 + r * a.sin())
+                })
+                .collect(),
+        );
+        match k % 4 {
+            0 => {
+                x += h;
+                w -= h;
+            }
+            1 => {
+                y += w;
+                h -= w;
+            }
+            2 => w -= h,
+            _ => h -= w,
+        }
+    }
+    let portrait = rect.height() > rect.width();
+    arcs.into_iter()
+        .map(|pts| {
+            pts.into_iter()
+                .map(|(px, py)| {
+                    let (mut u, mut v) = (px / phi, py);
+                    if orientation & 1 != 0 {
+                        u = 1.0 - u;
+                    }
+                    if orientation & 2 != 0 {
+                        v = 1.0 - v;
+                    }
+                    if portrait {
+                        (u, v) = (v, u);
+                    }
+                    rect.min + vec2(u * rect.width(), v * rect.height())
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn image_dimensions(bytes: &[u8]) -> image::ImageResult<(u32, u32)> {
     image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()?
         .into_dimensions()
 }
 
-fn decode(path: &Path, grayscale: bool) -> Result<ColorImage, String> {
+fn decode(path: &Path, filter: Filter) -> Result<(ColorImage, Option<image::RgbaImage>), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let mut img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     if img.width().max(img.height()) > MAX_TEXTURE_SIDE {
         img = img.thumbnail(MAX_TEXTURE_SIDE, MAX_TEXTURE_SIDE);
     }
-    if grayscale {
-        img = img.grayscale();
-    }
-    let rgba = img.to_rgba8();
+    let sample = (filter == Filter::Plain).then(|| {
+        if img.width().max(img.height()) > SAMPLE_SIDE {
+            img.thumbnail(SAMPLE_SIDE, SAMPLE_SIDE).to_rgba8()
+        } else {
+            img.to_rgba8()
+        }
+    });
+    let rgba = filters::apply(img, filter);
     let size = [rgba.width() as usize, rgba.height() as usize];
-    Ok(ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+    Ok((
+        ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()),
+        sample,
+    ))
 }

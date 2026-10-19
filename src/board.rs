@@ -27,6 +27,100 @@ pub struct Item {
     pub flip_x: bool,
     #[serde(default)]
     pub grayscale: bool,
+    /// Study view shown instead of the plain image (value, saturation, ...).
+    #[serde(default)]
+    pub analysis: Analysis,
+    /// Composition template drawn over the image.
+    #[serde(default)]
+    pub guide: Guide,
+    /// Which way the golden spiral turns, 0..=3.
+    #[serde(default)]
+    pub guide_orientation: u8,
+}
+
+/// Ways of looking at an image for painting study.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Analysis {
+    #[default]
+    None,
+    /// Lightness grouped into 3 tones (dark / mid / light), like a notan study.
+    Values3,
+    /// Lightness grouped into 5 tones.
+    Values5,
+    /// Saturation as brightness: white = most saturated, black = gray.
+    Saturation,
+    /// Where the busy detail is: bright = noisy, dark = calm rest areas.
+    Detail,
+    /// Heavy blur, to judge big shapes like squinting at the subject.
+    Squint,
+}
+
+impl Analysis {
+    pub const CYCLE: [Self; 6] = [
+        Self::None,
+        Self::Values3,
+        Self::Values5,
+        Self::Saturation,
+        Self::Detail,
+        Self::Squint,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "Normal view",
+            Self::Values3 => "Values: 3 tones",
+            Self::Values5 => "Values: 5 tones",
+            Self::Saturation => "Saturation map",
+            Self::Detail => "Noise / detail map",
+            Self::Squint => "Squint (big shapes)",
+        }
+    }
+}
+
+/// Composition templates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Guide {
+    #[default]
+    None,
+    Thirds,
+    PhiGrid,
+    GoldenSpiral,
+    /// Both diagonals plus their reciprocals (dynamic symmetry).
+    Diagonals,
+    Center,
+}
+
+impl Guide {
+    pub const CYCLE: [Self; 6] = [
+        Self::None,
+        Self::Thirds,
+        Self::PhiGrid,
+        Self::GoldenSpiral,
+        Self::Diagonals,
+        Self::Center,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "No guide",
+            Self::Thirds => "Rule of thirds",
+            Self::PhiGrid => "Phi grid",
+            Self::GoldenSpiral => "Golden spiral",
+            Self::Diagonals => "Diagonals + reciprocals",
+            Self::Center => "Center cross",
+        }
+    }
+}
+
+/// Steps through a cycle, forwards or backwards, wrapping around.
+pub fn cycle<T: Copy + PartialEq>(all: &[T], current: T, forward: bool) -> T {
+    let i = all.iter().position(|&x| x == current).unwrap_or(0);
+    let n = all.len();
+    all[if forward {
+        (i + 1) % n
+    } else {
+        (i + n - 1) % n
+    }]
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
