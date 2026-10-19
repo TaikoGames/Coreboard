@@ -690,9 +690,11 @@ dependencies = [
 name = "coreboard"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "arboard",
  "directories",
  "eframe",
+ "epaint_default_fonts",
  "image",
  "serde",
  "serde_json",

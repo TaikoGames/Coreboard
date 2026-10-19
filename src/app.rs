@@ -8,7 +8,8 @@ use eframe::egui::{
     StrokeKind, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 
-use crate::board::{self, Board, Item, Store};
+use crate::board::{self, Board, Item, Store, WatermarkPosition};
+use crate::export;
 
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 50.0;
@@ -29,6 +30,7 @@ enum Texture {
 }
 
 type Decoded = (String, Result<ColorImage, String>);
+type Exported = Result<std::path::PathBuf, String>;
 
 enum Drag {
     None,
@@ -53,12 +55,17 @@ pub struct CoreBoardApp {
     show_help: bool,
     /// The OS window level is sent once on startup, then on each toggle.
     window_level_sent: bool,
+    show_export: bool,
+    exporting: bool,
+    exported_tx: Sender<Exported>,
+    exported_rx: Receiver<Exported>,
     clipboard: Option<arboard::Clipboard>,
 }
 
 impl CoreBoardApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, store: Store) -> Self {
         let (decoded_tx, decoded_rx) = channel();
+        let (exported_tx, exported_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty();
         Self {
@@ -75,6 +82,10 @@ impl CoreBoardApp {
             toast: None,
             show_help,
             window_level_sent: false,
+            show_export: false,
+            exporting: false,
+            exported_tx,
+            exported_rx,
             clipboard: arboard::Clipboard::new().ok(),
         }
     }
@@ -466,6 +477,120 @@ impl CoreBoardApp {
         }
     }
 
+    // ---------------------------------------------------------------- export
+
+    fn export_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_export {
+            return;
+        }
+        let count = if self.selection.is_empty() {
+            format!("all {} images", self.board.items.len())
+        } else {
+            format!("{} selected image(s)", self.selection.len())
+        };
+        let mut export = false;
+        let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
+        egui::Window::new("Export PNG")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!("Exports {count} as one PNG."));
+                ui.add_space(6.0);
+                let wm = &mut self.board.watermark;
+                ui.label("Watermark text (leave empty for none):");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut wm.text)
+                        .hint_text("e.g. © Your Name")
+                        .desired_width(260.0),
+                );
+                if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    export = true;
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Position");
+                    egui::ComboBox::from_id_salt("watermark-position")
+                        .selected_text(wm.position.label())
+                        .show_ui(ui, |ui| {
+                            for pos in WatermarkPosition::ALL {
+                                ui.selectable_value(&mut wm.position, pos, pos.label());
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Opacity");
+                    let mut percent = (wm.opacity * 100.0).round();
+                    ui.add(egui::Slider::new(&mut percent, 10.0..=100.0).suffix("%"));
+                    wm.opacity = percent / 100.0;
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let label = if self.exporting {
+                        "Exporting…"
+                    } else {
+                        "Export"
+                    };
+                    export |= ui
+                        .add_enabled(!self.exporting, egui::Button::new(label))
+                        .clicked();
+                    close |= ui.button("Cancel").clicked();
+                });
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Saved to {}",
+                        self.store.dir.join("exports").display()
+                    ))
+                    .small()
+                    .weak(),
+                );
+            });
+
+        if export && !self.exporting {
+            self.start_export();
+            close = true;
+        }
+        if close {
+            self.show_export = false;
+            // Keep the watermark settings for next time.
+            self.touch();
+        }
+    }
+
+    fn start_export(&mut self) {
+        let targets = self.targets();
+        let items: Vec<Item> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| targets.contains(&i.id))
+            .cloned()
+            .collect();
+        let images_dir = self.store.dir.join("images");
+        let out_dir = self.store.dir.join("exports");
+        let watermark = self.board.watermark.clone();
+        let tx = self.exported_tx.clone();
+        self.exporting = true;
+        self.toast("Exporting…".into());
+        std::thread::spawn(move || {
+            let _ = tx.send(export::export_png(
+                &images_dir,
+                &out_dir,
+                &items,
+                &watermark,
+            ));
+        });
+    }
+
+    fn receive_exports(&mut self) {
+        if let Ok(result) = self.exported_rx.try_recv() {
+            self.exporting = false;
+            match result {
+                Ok(path) => self.toast(format!("Exported {}", path.display())),
+                Err(err) => self.toast(format!("Export failed: {err}")),
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- persistence
 
     fn save_now(&mut self) {
@@ -530,6 +655,7 @@ impl CoreBoardApp {
                     Key::Z if m.command && m.shift => self.redo(),
                     Key::Z if m.command => self.undo(),
                     Key::Y if m.command => self.redo(),
+                    Key::E if m.command => self.show_export = !self.board.items.is_empty(),
                     Key::S if m.command => {
                         self.save_now();
                         self.toast("Saved".into());
@@ -858,6 +984,7 @@ impl CoreBoardApp {
                         B                      black & white\n\
                         [ / ]                  window opacity\n\
                         T                      always on top\n\
+                        Ctrl+E                 export PNG (+ watermark)\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -875,7 +1002,7 @@ impl CoreBoardApp {
         }
 
         if let Some((msg, at)) = &self.toast {
-            if at.elapsed() < Duration::from_secs(2) {
+            if at.elapsed() < Duration::from_secs(3) {
                 painter.text(
                     canvas.center_bottom() + vec2(0.0, -24.0),
                     Align2::CENTER_BOTTOM,
@@ -908,8 +1035,13 @@ impl eframe::App for CoreBoardApp {
             ui.scope_id().with("canvas"),
             Sense::click_and_drag(),
         );
-        self.handle_input(ui, canvas);
+        // The export dialog is modal: the board ignores input while it is open.
+        if !self.show_export {
+            self.handle_input(ui, canvas);
+        }
         self.paint(ui, canvas);
+        self.export_dialog(&ctx);
+        self.receive_exports();
 
         if !self.window_level_sent {
             let level = if self.board.window.always_on_top {

@@ -61,6 +61,60 @@ impl Default for WindowSettings {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WatermarkPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    #[default]
+    BottomRight,
+    Center,
+    /// Repeated across the whole image.
+    Tiled,
+}
+
+impl WatermarkPosition {
+    pub const ALL: [Self; 6] = [
+        Self::BottomRight,
+        Self::BottomLeft,
+        Self::TopRight,
+        Self::TopLeft,
+        Self::Center,
+        Self::Tiled,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TopLeft => "Top left",
+            Self::TopRight => "Top right",
+            Self::BottomLeft => "Bottom left",
+            Self::BottomRight => "Bottom right",
+            Self::Center => "Center",
+            Self::Tiled => "Tiled",
+        }
+    }
+}
+
+/// Stamped on exported PNGs. An empty `text` exports without a watermark.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Watermark {
+    pub text: String,
+    pub position: WatermarkPosition,
+    /// 0.1..=1.0
+    pub opacity: f32,
+}
+
+impl Default for Watermark {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            position: WatermarkPosition::default(),
+            opacity: 0.6,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Board {
     /// Draw order: later items are on top.
@@ -69,6 +123,8 @@ pub struct Board {
     pub next_id: u64,
     #[serde(default)]
     pub window: WindowSettings,
+    #[serde(default)]
+    pub watermark: Watermark,
 }
 
 pub struct Store {

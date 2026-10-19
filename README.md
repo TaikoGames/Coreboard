@@ -29,6 +29,7 @@ The default board lives in your platform's data dir
 | Grayscale | **B** (black & white, toggles) |
 | Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
 | Always on top | **T** (toggles) |
+| Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
@@ -42,13 +43,27 @@ The default board lives in your platform's data dir
 A board is a plain folder:
 
 ```
-board.json   # layout: positions, sizes, stacking order, view
+board.json   # layout: positions, sizes, stacking order, view, settings
 images/      # a copy of every image, named by content hash (duplicates are stored once)
+exports/     # PNGs made with Ctrl+E
 ```
 
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Export with watermark
+
+**Ctrl+E** opens the export dialog. It renders the selected images (or the whole board) into one PNG
+from the original files, so the export is full quality with rotation, flip and grayscale applied.
+
+- **Watermark text**: e.g. `© Your Name`. Leave it empty to export without a watermark.
+- **Position**: any corner, center, or tiled across the whole image.
+- **Opacity**: 10–100%.
+
+The text gets a soft shadow so it reads on light and dark images. Your watermark settings are saved
+with the board, and exports go to the board's `exports/` folder as `coreboard-<date>-<time>.png`
+(UTC). Very large boards are scaled down to fit 8192 px.
 
 ## Overlay mode
 
