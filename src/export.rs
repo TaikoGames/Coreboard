@@ -10,7 +10,10 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 use image::imageops::{self, FilterType};
 use image::{DynamicImage, Rgba, RgbaImage};
 
-use crate::board::{Item, Kind, Watermark, WatermarkPosition};
+use crate::board::{
+    FRAME_FONT, FRAME_TITLE_HEIGHT, Item, Kind, NOTE_COLORS, NOTE_FONT, NOTE_PAD, Watermark,
+    WatermarkPosition,
+};
 use crate::filters::{self, Filter};
 
 /// Exports larger than this on either side are scaled down to fit.
@@ -56,7 +59,10 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
 
     let font =
         FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).expect("bundled font is valid");
-    for item in items {
+    // Frames sit behind everything, as on the board.
+    let mut ordered: Vec<&Item> = items.iter().collect();
+    ordered.sort_by_key(|i| !i.is_frame());
+    for item in ordered {
         let x = ((item.pos[0] - min[0] + PADDING) * scale).round() as i64;
         let y = ((item.pos[1] - min[1] + PADDING) * scale).round() as i64;
         let w = (item.size[0] * scale).round().max(1.0) as u32;
@@ -65,6 +71,14 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
             Kind::Image => {}
             Kind::Palette { colors } => {
                 draw_palette(&mut canvas, &font, (x, y, w, h), colors);
+                continue;
+            }
+            Kind::Note { text, color } => {
+                draw_note(&mut canvas, &font, (x, y, w, h), text, *color, scale);
+                continue;
+            }
+            Kind::Frame { title } => {
+                draw_frame(&mut canvas, &font, (x, y, w, h), title, scale);
                 continue;
             }
         }
@@ -149,6 +163,99 @@ fn draw_palette(
                 ink,
                 0.9,
             );
+        }
+    }
+}
+
+fn draw_note(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    text: &str,
+    color: u8,
+    scale: f32,
+) {
+    let (bg, ink) = NOTE_COLORS[color as usize % NOTE_COLORS.len()];
+    fill_rect(canvas, (x, y, w, h), bg);
+    let px = NOTE_FONT * scale;
+    let pad = NOTE_PAD * scale;
+    let bottom = (y + h as i64) as f32 - pad * 0.5;
+    let mut top = y as f32 + pad;
+    for line in wrap(font, text, px, w as f32 - 2.0 * pad) {
+        let line = Line::layout(font, &line, px);
+        if top + line.height > bottom {
+            break;
+        }
+        line.draw(font, canvas, x as f32 + pad, top, ink, 1.0);
+        top += px * 1.25;
+    }
+}
+
+fn draw_frame(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    title: &str,
+    scale: f32,
+) {
+    let title_h = ((FRAME_TITLE_HEIGHT * scale).round() as u32).min(h);
+    blend_rect(canvas, (x, y, w, h), [255, 255, 255], 10.0 / 255.0);
+    blend_rect(canvas, (x, y, w, title_h), [255, 255, 255], 22.0 / 255.0);
+    let t = (1.5 * scale).round().max(1.0) as u32;
+    let border = [95, 95, 95];
+    fill_rect(canvas, (x, y, w, t), border);
+    fill_rect(canvas, (x, y + h as i64 - t as i64, w, t), border);
+    fill_rect(canvas, (x, y, t, h), border);
+    fill_rect(canvas, (x + w as i64 - t as i64, y, t, h), border);
+    let px = FRAME_FONT * scale;
+    let line = Line::layout(font, title, px);
+    let ty = y as f32 + (title_h as f32 - line.height) / 2.0;
+    line.draw(
+        font,
+        canvas,
+        x as f32 + 10.0 * scale,
+        ty,
+        [235, 235, 235],
+        1.0,
+    );
+}
+
+/// Greedy word wrap into lines no wider than `max_width` (a single long word may overflow).
+fn wrap(font: &FontRef<'_>, text: &str, px: f32, max_width: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            let candidate = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if !line.is_empty() && Line::layout(font, &candidate, px).width > max_width {
+                lines.push(std::mem::replace(&mut line, word.to_string()));
+            } else {
+                line = candidate;
+            }
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+/// Mixes `color` over the canvas at `alpha`.
+fn blend_rect(
+    canvas: &mut RgbaImage,
+    (x, y, w, h): (i64, i64, u32, u32),
+    color: [u8; 3],
+    alpha: f32,
+) {
+    let (cw, ch) = (canvas.width() as i64, canvas.height() as i64);
+    for py in y.max(0)..(y + h as i64).min(ch) {
+        for px in x.max(0)..(x + w as i64).min(cw) {
+            let p = canvas.get_pixel_mut(px as u32, py as u32);
+            for c in 0..3 {
+                p[c] = (color[c] as f32 * alpha + p[c] as f32 * (1.0 - alpha)).round() as u8;
+            }
         }
     }
 }

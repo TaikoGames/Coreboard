@@ -53,7 +53,31 @@ pub enum Kind {
     Image,
     /// A strip of color swatches, most common first.
     Palette { colors: Vec<[u8; 3]> },
+    /// A text note. Its width is the item's; its height follows the text.
+    Note {
+        text: String,
+        /// Index into [`NOTE_COLORS`].
+        #[serde(default)]
+        color: u8,
+    },
+    /// A titled section drawn behind everything; moving it carries what's inside.
+    Frame { title: String },
 }
+
+/// Note backgrounds and their text colors.
+pub const NOTE_COLORS: [([u8; 3], [u8; 3]); 5] = [
+    ([247, 226, 124], [40, 36, 20]), // yellow
+    ([246, 178, 196], [48, 22, 30]), // pink
+    ([160, 206, 246], [18, 34, 52]), // blue
+    ([174, 222, 170], [20, 44, 22]), // green
+    ([43, 45, 49], [228, 228, 230]), // dark
+];
+
+/// Layout constants in world units, shared by the board and export so they match.
+pub const NOTE_FONT: f32 = 18.0;
+pub const NOTE_PAD: f32 = 12.0;
+pub const FRAME_TITLE_HEIGHT: f32 = 34.0;
+pub const FRAME_FONT: f32 = 19.0;
 
 fn full_crop() -> [f32; 4] {
     [0.0, 0.0, 1.0, 1.0]
@@ -81,6 +105,10 @@ impl Default for Item {
 impl Item {
     pub fn is_image(&self) -> bool {
         self.kind == Kind::Image
+    }
+
+    pub fn is_frame(&self) -> bool {
+        matches!(self.kind, Kind::Frame { .. })
     }
 
     /// Maps a normalized point in the source image to where it shows on screen, within the

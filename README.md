@@ -33,6 +33,9 @@ The default board lives in your platform's data dir
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
 | Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
+| Note | **N** adds a note at the cursor and starts typing; **Shift+N** changes its color |
+| Frame | **Ctrl+G** wraps the selection in a titled frame (nothing selected: an empty one) |
+| Edit text | **Double-click** a note, or a frame's title bar |
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
@@ -56,6 +59,19 @@ exports/     # PNGs made with Ctrl+E
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Notes and frames
+
+- **Notes**: press **N** to drop a note at the cursor and type. Click anywhere else when done (an
+  empty note disappears). Double-click to edit later, **Shift+N** cycles yellow, pink, blue, green
+  and dark. Drag the corner handle to change the width; the height follows the text.
+- **Frames** organize a board into labeled sections. Select some items and press **Ctrl+G** to put a
+  frame around them, then type its title. Frames sit behind everything. Grab one by its **title
+  bar** to move it, and everything inside comes along; the rest of the frame is click-through, so
+  you can still box-select inside it. Resize freely with the corner handle; double-click the title
+  to rename. To select a frame by box, box it in completely.
+
+Both are undoable and included in PNG exports.
 
 ## Color palettes
 

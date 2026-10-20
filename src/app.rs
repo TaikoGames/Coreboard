@@ -8,7 +8,10 @@ use eframe::egui::{
     StrokeKind, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 
-use crate::board::{self, Analysis, Board, Guide, Item, Kind, Store, WatermarkPosition};
+use crate::board::{
+    self, Analysis, Board, FRAME_FONT, FRAME_TITLE_HEIGHT, Guide, Item, Kind, NOTE_COLORS,
+    NOTE_FONT, NOTE_PAD, Store, WatermarkPosition,
+};
 use crate::export;
 use crate::filters::{self, Filter};
 
@@ -45,12 +48,15 @@ type Extracted = (u64, Result<Vec<[u8; 3]>, String>);
 enum Drag {
     None,
     Pan,
+    /// `carried`: items inside a dragged frame, which move along with it.
     Move {
         moved: bool,
+        carried: HashSet<u64>,
     },
+    /// `aspect` is locked for images and palettes; notes and frames resize freely.
     Resize {
         id: u64,
-        aspect: f32,
+        aspect: Option<f32>,
     },
     Marquee {
         start: Pos2,
@@ -79,6 +85,13 @@ pub struct CoreBoardApp {
     picker: bool,
     /// The image being cropped, if crop mode is on.
     crop_mode: Option<u64>,
+    /// The note or frame whose text is being edited.
+    editing: Option<u64>,
+    /// Its contents before editing (None for a just-created item), to skip no-op undo steps.
+    edit_original: Option<Kind>,
+    edit_focus_pending: bool,
+    /// Screen area of the text editor, where the board ignores presses.
+    edit_rect: Option<Rect>,
     show_help: bool,
     /// The OS window level is sent once on startup, then on each toggle.
     window_level_sent: bool,
@@ -113,6 +126,10 @@ impl CoreBoardApp {
             samples: HashMap::new(),
             picker: false,
             crop_mode: None,
+            editing: None,
+            edit_original: None,
+            edit_focus_pending: false,
+            edit_rect: None,
             show_help,
             window_level_sent: false,
             show_export: false,
@@ -352,6 +369,7 @@ impl CoreBoardApp {
                     .find(|(r, _)| r.contains(pos))
                     .map(|(_, &c)| c);
             }
+            Kind::Note { .. } | Kind::Frame { .. } => return None,
         }
         let sample = self.samples.get(&item.file)?;
         let s = (pos - rect.min) / rect.size();
@@ -560,7 +578,9 @@ impl CoreBoardApp {
         const GAP: f32 = 16.0;
         let targets = self.targets();
         let mut picked: Vec<usize> = (0..self.board.items.len())
-            .filter(|&i| targets.contains(&self.board.items[i].id))
+            .filter(|&i| {
+                targets.contains(&self.board.items[i].id) && !self.board.items[i].is_frame()
+            })
             .collect();
         if picked.is_empty() {
             return;
@@ -621,14 +641,269 @@ impl CoreBoardApp {
         self.board.items.append(&mut picked);
     }
 
-    /// Topmost item under a screen position.
+    /// Topmost item under a screen position. Frames sit behind everything and are only
+    /// grabbed by their title bar, so their body stays free for box-selecting.
     fn hit(&self, canvas: Rect, pos: Pos2) -> Option<u64> {
+        let items = &self.board.items;
+        items
+            .iter()
+            .rev()
+            .filter(|i| !i.is_frame())
+            .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+            .or_else(|| {
+                items
+                    .iter()
+                    .rev()
+                    .filter(|i| i.is_frame())
+                    .find(|i| self.frame_title_rect(canvas, i).contains(pos))
+            })
+            .map(|i| i.id)
+    }
+
+    fn frame_title_rect(&self, canvas: Rect, item: &Item) -> Rect {
+        let rect = self.item_screen_rect(canvas, item);
+        let height = (FRAME_TITLE_HEIGHT * self.board.view.zoom).min(rect.height());
+        Rect::from_min_size(rect.min, vec2(rect.width(), height))
+    }
+
+    /// Items to draw, bottom to top: frames first, then everything else in stacking order.
+    fn draw_order(&self) -> Vec<Item> {
+        let (frames, rest): (Vec<&Item>, Vec<&Item>) =
+            self.board.items.iter().partition(|i| i.is_frame());
+        frames.into_iter().chain(rest).cloned().collect()
+    }
+
+    /// Unselected items lying fully inside a selected frame; they move with it.
+    fn carried_by_selected_frames(&self) -> HashSet<u64> {
+        let world_rect =
+            |i: &Item| Rect::from_min_size(pos2(i.pos[0], i.pos[1]), vec2(i.size[0], i.size[1]));
+        let frames: Vec<Rect> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| i.is_frame() && self.selection.contains(&i.id))
+            .map(world_rect)
+            .collect();
         self.board
             .items
             .iter()
-            .rev()
-            .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+            .filter(|i| !self.selection.contains(&i.id))
+            .filter(|i| frames.iter().any(|f| f.contains_rect(world_rect(i))))
             .map(|i| i.id)
+            .collect()
+    }
+
+    // ---------------------------------------------------------------- notes and frames
+
+    fn add_note(&mut self, canvas: Rect, at: Pos2) {
+        let world = self.to_world(canvas, at);
+        self.checkpoint();
+        let id = self.board.next_id;
+        self.board.next_id += 1;
+        self.board.items.push(Item {
+            id,
+            pos: [world.x, world.y],
+            size: [260.0, NOTE_FONT * 1.3 + 2.0 * NOTE_PAD],
+            kind: Kind::Note {
+                text: String::new(),
+                color: 0,
+            },
+            ..Item::default()
+        });
+        self.selection = HashSet::from([id]);
+        self.begin_edit(id, true);
+    }
+
+    /// Wraps the selection in a titled frame (or adds an empty one at `at`).
+    fn add_frame(&mut self, canvas: Rect, at: Pos2) {
+        const PAD: f32 = 24.0;
+        let bounds = self
+            .board
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(&i.id))
+            .map(|i| Rect::from_min_size(pos2(i.pos[0], i.pos[1]), vec2(i.size[0], i.size[1])))
+            .reduce(|a, b| a.union(b));
+        let rect = match bounds {
+            Some(b) => Rect::from_min_max(
+                b.min - vec2(PAD, PAD + FRAME_TITLE_HEIGHT),
+                b.max + vec2(PAD, PAD),
+            ),
+            None => Rect::from_min_size(self.to_world(canvas, at), vec2(640.0, 420.0)),
+        };
+        self.checkpoint();
+        let id = self.board.next_id;
+        self.board.next_id += 1;
+        self.board.items.push(Item {
+            id,
+            pos: [rect.min.x, rect.min.y],
+            size: [rect.width(), rect.height()],
+            kind: Kind::Frame {
+                title: "Untitled".into(),
+            },
+            ..Item::default()
+        });
+        self.selection = HashSet::from([id]);
+        self.begin_edit(id, true);
+    }
+
+    fn cycle_note_color(&mut self) {
+        let any = self
+            .board
+            .items
+            .iter()
+            .any(|i| self.selection.contains(&i.id) && matches!(i.kind, Kind::Note { .. }));
+        if !any {
+            return;
+        }
+        self.checkpoint();
+        for item in &mut self.board.items {
+            if self.selection.contains(&item.id)
+                && let Kind::Note { color, .. } = &mut item.kind
+            {
+                *color = (*color + 1) % NOTE_COLORS.len() as u8;
+            }
+        }
+        self.touch();
+    }
+
+    /// Starts editing a note's text or a frame's title. `created` means the item was just
+    /// added, so its creation is already on the undo stack.
+    fn begin_edit(&mut self, id: u64, created: bool) {
+        self.finish_edit();
+        let Some(item) = self.board.items.iter().find(|i| i.id == id) else {
+            return;
+        };
+        if !matches!(item.kind, Kind::Note { .. } | Kind::Frame { .. }) {
+            return;
+        }
+        self.edit_original = if created {
+            None
+        } else {
+            let kind = item.kind.clone();
+            self.checkpoint();
+            Some(kind)
+        };
+        self.editing = Some(id);
+        self.edit_focus_pending = true;
+    }
+
+    fn finish_edit(&mut self) {
+        let Some(id) = self.editing.take() else {
+            return;
+        };
+        self.edit_rect = None;
+        let original = self.edit_original.take();
+        let Some(index) = self.board.items.iter().position(|i| i.id == id) else {
+            return;
+        };
+        let item = &self.board.items[index];
+        let empty_note = matches!(&item.kind, Kind::Note { text, .. } if text.trim().is_empty());
+        match original {
+            // A new note left empty was never really there.
+            None if empty_note => {
+                self.board.items.remove(index);
+                self.undo.pop();
+                self.selection.remove(&id);
+            }
+            None => {}
+            Some(kind) if kind == item.kind => {
+                self.undo.pop();
+            }
+            // Clearing a note's text deletes it (undo brings it back).
+            Some(_) if empty_note => {
+                self.board.items.remove(index);
+                self.selection.remove(&id);
+            }
+            Some(_) => {}
+        }
+        self.touch();
+    }
+
+    /// The text editor drawn over the note or frame title being edited.
+    fn edit_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let Some(id) = self.editing else { return };
+        let Some(index) = self.board.items.iter().position(|i| i.id == id) else {
+            self.editing = None;
+            self.edit_rect = None;
+            return;
+        };
+        let zoom = self.board.view.zoom;
+        let item = &self.board.items[index];
+        let rect = self.item_screen_rect(canvas, item);
+        let title = self.frame_title_rect(canvas, item);
+        let (area, font, ink, multiline) = match &item.kind {
+            Kind::Note { color, .. } => {
+                let [r, g, b] = NOTE_COLORS[*color as usize % NOTE_COLORS.len()].1;
+                (
+                    rect.shrink(NOTE_PAD * zoom),
+                    NOTE_FONT * zoom,
+                    Color32::from_rgb(r, g, b),
+                    true,
+                )
+            }
+            Kind::Frame { .. } => {
+                let font = FRAME_FONT * zoom;
+                let inset = vec2(10.0 * zoom, ((title.height() - font * 1.25) / 2.0).max(0.0));
+                (title.shrink2(inset), font, Color32::from_gray(235), false)
+            }
+            _ => {
+                self.editing = None;
+                return;
+            }
+        };
+        let focus = std::mem::take(&mut self.edit_focus_pending);
+        let mut changed = false;
+        let mut done = false;
+        let mut editor_rect = area;
+        let item = &mut self.board.items[index];
+        let text = match &mut item.kind {
+            Kind::Note { text, .. } => text,
+            Kind::Frame { title } => title,
+            _ => return,
+        };
+        egui::Area::new(egui::Id::unique("coreboard-text-editor"))
+            .fixed_pos(area.min)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let edit = if multiline {
+                    egui::TextEdit::multiline(text)
+                } else {
+                    egui::TextEdit::singleline(text)
+                };
+                let response = ui.add(
+                    edit.font(FontId::proportional(font.max(4.0)))
+                        .text_color(ink)
+                        .frame(egui::Frame::NONE)
+                        .margin(0.0)
+                        .desired_width(area.width().max(20.0))
+                        .desired_rows(1),
+                );
+                if focus {
+                    response.request_focus();
+                    if !multiline {
+                        // Select the placeholder title so typing replaces it.
+                        let mut state =
+                            egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+                        let all = egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(text.chars().count()),
+                        );
+                        state.cursor.set_char_range(Some(all));
+                        state.store(ui.ctx(), response.id);
+                    }
+                }
+                changed = response.changed();
+                done = !focus && !response.has_focus();
+                editor_rect = response.rect.union(area);
+            });
+        self.edit_rect = Some(editor_rect);
+        if changed {
+            self.touch();
+        }
+        if done {
+            self.finish_edit();
+        }
     }
 
     fn hit_handle(&self, canvas: Rect, pos: Pos2) -> Option<u64> {
@@ -932,9 +1207,10 @@ impl CoreBoardApp {
             self.import_all(canvas, anchor, sources);
         }
 
-        // Keyboard.
+        // Keyboard, unless a text field (note, frame title, dialog) is taking typing.
         let mut paste_requested = None;
-        for event in &events {
+        let typing = ctx.egui_wants_keyboard_input();
+        for event in events.iter().filter(|_| !typing) {
             match event {
                 Event::Paste(text) => paste_requested = Some(Some(text.clone())),
                 Event::Key {
@@ -972,6 +1248,9 @@ impl CoreBoardApp {
                     Key::C if !m.command && m.shift => self.turn_spiral(),
                     Key::C if !m.command => self.cycle_guide(),
                     Key::P if !m.command => self.extract_palettes(if m.shift { 10 } else { 6 }),
+                    Key::N if !m.command && m.shift => self.cycle_note_color(),
+                    Key::N if !m.command => self.add_note(canvas, anchor),
+                    Key::G if m.command => self.add_frame(canvas, anchor),
                     Key::X if !m.command && m.shift => self.reset_crop(canvas),
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
@@ -1028,7 +1307,9 @@ impl CoreBoardApp {
                 button,
                 pressed: true,
                 ..
-            } if canvas.contains(*pos) => Some((*pos, *button)),
+            } if canvas.contains(*pos) && !self.edit_rect.is_some_and(|r| r.contains(*pos)) => {
+                Some((*pos, *button))
+            }
             _ => None,
         });
         if let Some((pos, button)) = press
@@ -1041,7 +1322,10 @@ impl CoreBoardApp {
                 Drag::Crop { start: pos }
             } else if let Some(id) = self.hit_handle(canvas, pos) {
                 let item = self.board.items.iter().find(|i| i.id == id).unwrap();
-                let aspect = item.size[0] / item.size[1];
+                let aspect = match item.kind {
+                    Kind::Image | Kind::Palette { .. } => Some(item.size[0] / item.size[1]),
+                    Kind::Note { .. } | Kind::Frame { .. } => None,
+                };
                 self.checkpoint();
                 Drag::Resize { id, aspect }
             } else if let Some(id) = self.hit(canvas, pos) {
@@ -1055,7 +1339,10 @@ impl CoreBoardApp {
                 }
                 self.checkpoint();
                 self.raise_selection();
-                Drag::Move { moved: false }
+                Drag::Move {
+                    moved: false,
+                    carried: self.carried_by_selected_frames(),
+                }
             } else if modifiers.shift || modifiers.command {
                 Drag::Marquee {
                     start: pos,
@@ -1086,12 +1373,12 @@ impl CoreBoardApp {
                     self.touch();
                 }
             }
-            Drag::Move { moved } => {
+            Drag::Move { moved, carried } => {
                 if delta != Vec2::ZERO {
                     *moved = true;
                     let d = delta / zoom;
                     for item in &mut self.board.items {
-                        if self.selection.contains(&item.id) {
+                        if self.selection.contains(&item.id) || carried.contains(&item.id) {
                             item.pos[0] += d.x;
                             item.pos[1] += d.y;
                         }
@@ -1105,10 +1392,17 @@ impl CoreBoardApp {
                     let world = self.to_world(canvas, p);
                     let min_w = 16.0 / zoom;
                     if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
-                        let w = (world.x - item.pos[0])
-                            .max((world.y - item.pos[1]) * aspect)
-                            .max(min_w);
-                        item.size = [w, w / aspect];
+                        let w = world.x - item.pos[0];
+                        let h = world.y - item.pos[1];
+                        item.size = match (aspect, &item.kind) {
+                            (Some(aspect), _) => {
+                                let w = w.max(h * aspect).max(min_w);
+                                [w, w / aspect]
+                            }
+                            // A note's height follows its text.
+                            (None, Kind::Note { .. }) => [w.max(80.0), item.size[1]],
+                            (None, _) => [w.max(160.0), h.max(FRAME_TITLE_HEIGHT + 40.0)],
+                        };
                     }
                     self.touch();
                 }
@@ -1118,7 +1412,7 @@ impl CoreBoardApp {
         // Finish the drag.
         if !pointer.any_down() {
             match std::mem::replace(&mut self.drag, Drag::None) {
-                Drag::Move { moved: false } => {
+                Drag::Move { moved: false, .. } => {
                     // A plain click: drop the no-op history entry and collapse to one item.
                     self.undo.pop();
                     if !(modifiers.shift || modifiers.command)
@@ -1145,7 +1439,14 @@ impl CoreBoardApp {
                             self.selection.clear();
                         }
                         for item in &self.board.items {
-                            if area.intersects(self.item_screen_rect(canvas, item)) {
+                            let rect = self.item_screen_rect(canvas, item);
+                            // Frames are big; only select them when boxed in completely.
+                            let hit = if item.is_frame() {
+                                area.contains_rect(rect)
+                            } else {
+                                area.intersects(rect)
+                            };
+                            if hit {
                                 self.selection.insert(item.id);
                             }
                         }
@@ -1153,6 +1454,15 @@ impl CoreBoardApp {
                 }
                 _ => {}
             }
+        }
+
+        // Double-click a note, or a frame's title, to edit its text.
+        if pointer.button_double_clicked(egui::PointerButton::Primary)
+            && let Some(pos) = pointer.interact_pos().filter(|p| canvas.contains(*p))
+            && !self.edit_rect.is_some_and(|r| r.contains(pos))
+            && let Some(id) = self.hit(canvas, pos)
+        {
+            self.begin_edit(id, false);
         }
     }
 
@@ -1189,18 +1499,53 @@ impl CoreBoardApp {
         {
             self.crop_mode = None;
         }
-        let items = self.board.items.clone();
+        let items = self.draw_order();
+        let mut note_heights = Vec::new();
         for item in &items {
             let rect = self.item_screen_rect(canvas, item);
+            if let Kind::Note { text, .. } = &item.kind {
+                // Fit the note's height to its text, measured at 100% so zoom doesn't matter.
+                let wrap = (item.size[0] - 2.0 * NOTE_PAD).max(1.0);
+                let galley = painter.layout(
+                    text.clone(),
+                    FontId::proportional(NOTE_FONT),
+                    Color32::WHITE,
+                    wrap,
+                );
+                let height = galley.size().y.max(NOTE_FONT * 1.3) + 2.0 * NOTE_PAD;
+                if (height - item.size[1]).abs() > 0.5 {
+                    note_heights.push((item.id, height));
+                }
+            }
             if !rect.intersects(canvas) {
                 continue;
             }
-            if let Kind::Palette { colors } = &item.kind {
-                draw_palette(&painter, rect, colors, opacity);
-                if self.selection.contains(&item.id) {
-                    draw_selection(&painter, rect);
+            let selected = self.selection.contains(&item.id);
+            let editing = self.editing == Some(item.id);
+            match &item.kind {
+                Kind::Image => {}
+                Kind::Palette { colors } => {
+                    draw_palette(&painter, rect, colors, opacity);
+                    if selected {
+                        draw_selection(&painter, rect);
+                    }
+                    continue;
                 }
-                continue;
+                Kind::Note { text, color } => {
+                    draw_note(&painter, rect, text, *color, zoom, opacity, editing);
+                    if selected {
+                        draw_selection(&painter, rect);
+                    }
+                    continue;
+                }
+                Kind::Frame { title } => {
+                    let title_rect = self.frame_title_rect(canvas, item);
+                    draw_frame(&painter, rect, title_rect, title, zoom, opacity, editing);
+                    if selected {
+                        draw_selection(&painter, rect);
+                    }
+                    continue;
+                }
             }
             if self.picker {
                 // The picker reads original colors, whatever view the image is shown in.
@@ -1263,6 +1608,13 @@ impl CoreBoardApp {
             }
         }
 
+        for (id, height) in note_heights {
+            if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
+                item.size[1] = height;
+            }
+            self.touch();
+        }
+
         if self.picker
             && let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
         {
@@ -1297,7 +1649,7 @@ impl CoreBoardApp {
             painter.text(
                 canvas.center(),
                 Align2::CENTER_CENTER,
-                "Drop images here, or paste with Ctrl+V",
+                "Drop images here, paste with Ctrl+V, or press N for a note",
                 FontId::proportional(22.0),
                 Color32::from_gray(120),
             );
@@ -1353,6 +1705,9 @@ impl CoreBoardApp {
                         I                      color picker (HSV + value)\n\
                         X / Shift+X            crop (drag) / reset crop\n\
                         P / Shift+P            extract 6 / 10 color palette\n\
+                        N / Shift+N            new note / note color\n\
+                        Ctrl+G                 frame around selection\n\
+                        Double-click           edit note or frame title\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -1408,6 +1763,7 @@ impl eframe::App for CoreBoardApp {
             self.handle_input(ui, canvas);
         }
         self.paint(ui, canvas);
+        self.edit_overlay(&ctx, canvas);
         self.export_dialog(&ctx);
         self.receive_exports();
         self.receive_palettes();
@@ -1435,6 +1791,99 @@ impl eframe::App for CoreBoardApp {
             }
         }
     }
+}
+
+fn rgb([r, g, b]: [u8; 3]) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+
+fn draw_note(
+    painter: &egui::Painter,
+    rect: Rect,
+    text: &str,
+    color: u8,
+    zoom: f32,
+    opacity: f32,
+    editing: bool,
+) {
+    let (bg, ink) = NOTE_COLORS[color as usize % NOTE_COLORS.len()];
+    let radius = CornerRadius::same((4.0 * zoom).clamp(1.0, 8.0) as u8);
+    // Soft drop shadow, then the card.
+    painter.rect_filled(
+        rect.translate(vec2(0.0, 2.0 * zoom.min(2.0))),
+        radius,
+        Color32::from_black_alpha(70).gamma_multiply(opacity),
+    );
+    painter.rect_filled(rect, radius, rgb(bg).gamma_multiply(opacity));
+    if editing {
+        return; // The text editor draws the text.
+    }
+    let inner = rect.shrink(NOTE_PAD * zoom);
+    let font = NOTE_FONT * zoom;
+    if font < 3.0 {
+        return; // Too small to read; the card alone shows where it is.
+    }
+    let (shown, ink) = if text.trim().is_empty() {
+        ("Empty note", rgb(ink).gamma_multiply(0.45))
+    } else {
+        (text, rgb(ink))
+    };
+    let ink = ink.gamma_multiply(opacity);
+    let galley = painter.layout(
+        shown.to_string(),
+        FontId::proportional(font),
+        ink,
+        inner.width().max(1.0),
+    );
+    painter
+        .with_clip_rect(rect.intersect(painter.clip_rect()))
+        .galley(inner.min, galley, ink);
+}
+
+fn draw_frame(
+    painter: &egui::Painter,
+    rect: Rect,
+    title_rect: Rect,
+    title: &str,
+    zoom: f32,
+    opacity: f32,
+    editing: bool,
+) {
+    let r = (6.0 * zoom).clamp(1.0, 10.0) as u8;
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(r),
+        Color32::from_white_alpha(10).gamma_multiply(opacity),
+    );
+    painter.rect_filled(
+        title_rect,
+        CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        },
+        Color32::from_white_alpha(22).gamma_multiply(opacity),
+    );
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(r),
+        Stroke::new(1.5, Color32::from_gray(95).gamma_multiply(opacity)),
+        StrokeKind::Inside,
+    );
+    let font = FRAME_FONT * zoom;
+    if editing || font < 4.0 {
+        return;
+    }
+    let ink = Color32::from_gray(235);
+    let galley = painter.layout_no_wrap(title.to_string(), FontId::proportional(font), ink);
+    let pos = pos2(
+        title_rect.min.x + 10.0 * zoom,
+        title_rect.center().y - galley.size().y / 2.0,
+    );
+    painter
+        .with_clip_rect(title_rect.intersect(painter.clip_rect()))
+        .galley(pos, galley, ink);
 }
 
 /// Accent outline with a dark halo (visible on any color) and the resize handle.
