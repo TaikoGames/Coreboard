@@ -36,6 +36,76 @@ pub struct Item {
     /// Which way the golden spiral turns, 0..=3.
     #[serde(default)]
     pub guide_orientation: u8,
+    /// Visible part of the source image as `[u0, v0, u1, v1]`, normalized and in the image's
+    /// own orientation (before rotation and flip). The file itself is never changed.
+    #[serde(default = "full_crop")]
+    pub crop: [f32; 4],
+}
+
+fn full_crop() -> [f32; 4] {
+    [0.0, 0.0, 1.0, 1.0]
+}
+
+impl Default for Item {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            file: String::new(),
+            pos: [0.0; 2],
+            size: [1.0; 2],
+            rotation: 0,
+            flip_x: false,
+            grayscale: false,
+            analysis: Analysis::None,
+            guide: Guide::None,
+            guide_orientation: 0,
+            crop: full_crop(),
+        }
+    }
+}
+
+impl Item {
+    /// Maps a normalized point in the source image to where it shows on screen, within the
+    /// whole (uncropped) image's display rect.
+    pub fn tex_to_display(&self, (u, v): (f32, f32)) -> (f32, f32) {
+        let (x, y) = match self.rotation % 4 {
+            1 => (1.0 - v, u),
+            2 => (1.0 - u, 1.0 - v),
+            3 => (v, 1.0 - u),
+            _ => (u, v),
+        };
+        if self.flip_x { (1.0 - x, y) } else { (x, y) }
+    }
+
+    /// Inverse of [`Self::tex_to_display`].
+    pub fn display_to_tex(&self, (x, y): (f32, f32)) -> (f32, f32) {
+        let x = if self.flip_x { 1.0 - x } else { x };
+        match self.rotation % 4 {
+            1 => (y, 1.0 - x),
+            2 => (1.0 - x, 1.0 - y),
+            3 => (1.0 - y, x),
+            _ => (x, y),
+        }
+    }
+
+    /// The crop as it appears on screen: `[x0, y0, x1, y1]` within the whole image's rect.
+    pub fn display_crop(&self) -> [f32; 4] {
+        let [u0, v0, u1, v1] = self.crop;
+        let (ax, ay) = self.tex_to_display((u0, v0));
+        let (bx, by) = self.tex_to_display((u1, v1));
+        [ax.min(bx), ay.min(by), ax.max(bx), ay.max(by)]
+    }
+
+    /// Sets the crop from a rect given in screen orientation (see [`Self::display_crop`]).
+    pub fn set_display_crop(&mut self, [x0, y0, x1, y1]: [f32; 4]) {
+        let (au, av) = self.display_to_tex((x0, y0));
+        let (bu, bv) = self.display_to_tex((x1, y1));
+        self.crop = [au.min(bu), av.min(bv), au.max(bu), av.max(bv)];
+    }
+
+    pub fn is_cropped(&self) -> bool {
+        self.crop != full_crop()
+    }
 }
 
 /// Ways of looking at an image for painting study.
@@ -303,4 +373,69 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: [f32; 4], b: [f32; 4]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5)
+    }
+
+    #[test]
+    fn display_mapping_round_trips_for_every_orientation() {
+        for rotation in 0..4 {
+            for flip_x in [false, true] {
+                let item = Item {
+                    rotation,
+                    flip_x,
+                    ..Item::default()
+                };
+                for p in [(0.1, 0.2), (0.9, 0.3), (0.5, 0.75)] {
+                    let back = item.display_to_tex(item.tex_to_display(p));
+                    assert!((back.0 - p.0).abs() < 1e-6 && (back.1 - p.1).abs() < 1e-6);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn display_crop_round_trips() {
+        let rect = [0.1, 0.2, 0.6, 0.9];
+        for rotation in 0..4 {
+            for flip_x in [false, true] {
+                let mut item = Item {
+                    rotation,
+                    flip_x,
+                    ..Item::default()
+                };
+                item.set_display_crop(rect);
+                assert!(
+                    close(item.display_crop(), rect),
+                    "rot {rotation} flip {flip_x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quarter_turn_moves_top_left_of_image_to_top_right_of_screen() {
+        let item = Item {
+            rotation: 1,
+            ..Item::default()
+        };
+        assert_eq!(item.tex_to_display((0.0, 0.0)), (1.0, 0.0));
+        // So cropping the image's left strip shows up as the screen's top strip.
+        let mut item = item;
+        item.crop = [0.0, 0.0, 0.25, 1.0];
+        assert!(close(item.display_crop(), [0.0, 0.0, 1.0, 0.25]));
+    }
+
+    #[test]
+    fn old_boards_load_uncropped() {
+        let item: Item =
+            serde_json::from_str(r#"{"id":1,"file":"a.png","pos":[0,0],"size":[10,10]}"#).unwrap();
+        assert!(!item.is_cropped());
+    }
 }

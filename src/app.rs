@@ -43,9 +43,21 @@ type Exported = Result<std::path::PathBuf, String>;
 enum Drag {
     None,
     Pan,
-    Move { moved: bool },
-    Resize { id: u64, aspect: f32 },
-    Marquee { start: Pos2, additive: bool },
+    Move {
+        moved: bool,
+    },
+    Resize {
+        id: u64,
+        aspect: f32,
+    },
+    Marquee {
+        start: Pos2,
+        additive: bool,
+    },
+    /// Drawing a new crop rectangle in crop mode.
+    Crop {
+        start: Pos2,
+    },
 }
 
 pub struct CoreBoardApp {
@@ -63,6 +75,8 @@ pub struct CoreBoardApp {
     /// Small CPU copies of images for the color picker, by file name.
     samples: HashMap<String, image::RgbaImage>,
     picker: bool,
+    /// The image being cropped, if crop mode is on.
+    crop_mode: Option<u64>,
     show_help: bool,
     /// The OS window level is sent once on startup, then on each toggle.
     window_level_sent: bool,
@@ -93,6 +107,7 @@ impl CoreBoardApp {
             toast: None,
             samples: HashMap::new(),
             picker: false,
+            crop_mode: None,
             show_help,
             window_level_sent: false,
             show_export: false,
@@ -319,16 +334,9 @@ impl CoreBoardApp {
         let item = self.board.items.iter().find(|i| i.id == id)?;
         let sample = self.samples.get(&item.file)?;
         let rect = self.item_screen_rect(canvas, item);
-        let mut s = ((pos - rect.min) / rect.size()).to_pos2();
-        if item.flip_x {
-            s.x = 1.0 - s.x;
-        }
-        let (u, v) = match item.rotation % 4 {
-            1 => (s.y, 1.0 - s.x),
-            2 => (1.0 - s.x, 1.0 - s.y),
-            3 => (1.0 - s.y, s.x),
-            _ => (s.x, s.y),
-        };
+        let s = (pos - rect.min) / rect.size();
+        let [x0, y0, x1, y1] = item.display_crop();
+        let (u, v) = item.display_to_tex((x0 + s.x * (x1 - x0), y0 + s.y * (y1 - y0)));
         let x = ((u * sample.width() as f32) as u32).min(sample.width() - 1);
         let y = ((v * sample.height() as f32) as u32).min(sample.height() - 1);
         let [r, g, b, _] = sample.get_pixel(x, y).0;
@@ -375,6 +383,79 @@ impl CoreBoardApp {
         // Small ring marking the exact pixel.
         painter.circle_stroke(pos, 5.0, Stroke::new(3.0, Color32::BLACK));
         painter.circle_stroke(pos, 5.0, Stroke::new(1.5, Color32::WHITE));
+    }
+
+    // ---------------------------------------------------------------- crop
+
+    fn toggle_crop_mode(&mut self) {
+        if self.crop_mode.take().is_some() {
+            self.toast("Crop done".into());
+            return;
+        }
+        if self.selection.len() != 1 {
+            self.toast("Select one image to crop".into());
+            return;
+        }
+        self.crop_mode = self.selection.iter().next().copied();
+        self.toast("Drag over the image to crop · Enter/Esc when done · Shift+X resets".into());
+    }
+
+    /// Where the whole, uncropped image sits on screen for an item showing only its crop.
+    fn full_image_rect(&self, canvas: Rect, item: &Item) -> Rect {
+        let rect = self.item_screen_rect(canvas, item);
+        let [x0, y0, x1, y1] = item.display_crop();
+        let size = vec2(rect.width() / (x1 - x0), rect.height() / (y1 - y0));
+        Rect::from_min_size(rect.min - vec2(x0 * size.x, y0 * size.y), size)
+    }
+
+    /// Crops the crop-mode image to `area` (screen space), keeping it in place on the board.
+    fn apply_crop(&mut self, canvas: Rect, area: Rect) {
+        let Some(id) = self.crop_mode else { return };
+        let Some(item) = self.board.items.iter().find(|i| i.id == id) else {
+            return;
+        };
+        let full = self.full_image_rect(canvas, item);
+        let area = area.intersect(full);
+        if area.width() < 4.0 || area.height() < 4.0 {
+            return;
+        }
+        let min = self.to_world(canvas, area.min);
+        let zoom = self.board.view.zoom;
+        let n = |p: Pos2| ((p - full.min) / full.size()).to_pos2();
+        let (a, b) = (n(area.min), n(area.max));
+        self.checkpoint();
+        if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
+            item.set_display_crop([a.x, a.y, b.x, b.y]);
+            item.pos = [min.x, min.y];
+            item.size = [area.width() / zoom, area.height() / zoom];
+        }
+        self.touch();
+    }
+
+    /// Shows the whole image again, growing the item around its current crop.
+    fn reset_crop(&mut self, canvas: Rect) {
+        let fulls: Vec<(u64, Rect)> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(&i.id) && i.is_cropped())
+            .map(|i| (i.id, self.full_image_rect(canvas, i)))
+            .collect();
+        if fulls.is_empty() {
+            return;
+        }
+        self.checkpoint();
+        let zoom = self.board.view.zoom;
+        for (id, full) in fulls {
+            let min = self.to_world(canvas, full.min);
+            if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
+                item.crop = [0.0, 0.0, 1.0, 1.0];
+                item.pos = [min.x, min.y];
+                item.size = [full.width() / zoom, full.height() / zoom];
+            }
+        }
+        self.toast("Crop reset".into());
+        self.touch();
     }
 
     /// Packs items into rows, in reading order, starting at their current top-left corner.
@@ -507,12 +588,7 @@ impl CoreBoardApp {
                 file,
                 pos: [cursor.x - size.x / 2.0, cursor.y - size.y / 2.0],
                 size: [size.x, size.y],
-                rotation: 0,
-                flip_x: false,
-                grayscale: false,
-                analysis: Analysis::None,
-                guide: Guide::None,
-                guide_orientation: 0,
+                ..Item::default()
             });
             self.selection.insert(id);
             cursor += Vec2::splat(24.0 / zoom);
@@ -799,6 +875,10 @@ impl CoreBoardApp {
                     Key::V if !m.command => self.cycle_analysis(!m.shift),
                     Key::C if !m.command && m.shift => self.turn_spiral(),
                     Key::C if !m.command => self.cycle_guide(),
+                    Key::X if !m.command && m.shift => self.reset_crop(canvas),
+                    Key::X if !m.command => self.toggle_crop_mode(),
+                    Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
+                    Key::Escape if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::I if !m.command => {
                         self.picker = !self.picker;
                         let state = if self.picker {
@@ -860,6 +940,8 @@ impl CoreBoardApp {
             let space = ctx.input(|i| i.key_down(Key::Space));
             self.drag = if button != egui::PointerButton::Primary || space {
                 Drag::Pan
+            } else if self.crop_mode.is_some() {
+                Drag::Crop { start: pos }
             } else if let Some(id) = self.hit_handle(canvas, pos) {
                 let item = self.board.items.iter().find(|i| i.id == id).unwrap();
                 let aspect = item.size[0] / item.size[1];
@@ -899,7 +981,7 @@ impl CoreBoardApp {
         };
         let zoom = self.board.view.zoom;
         match &mut self.drag {
-            Drag::None | Drag::Marquee { .. } => {}
+            Drag::None | Drag::Marquee { .. } | Drag::Crop { .. } => {}
             Drag::Pan => {
                 self.board.view.offset[0] += delta.x;
                 self.board.view.offset[1] += delta.y;
@@ -948,6 +1030,17 @@ impl CoreBoardApp {
                         self.selection = HashSet::from([id]);
                     }
                 }
+                Drag::Crop { start } => {
+                    if let Some(end) = pointer.interact_pos() {
+                        let area = Rect::from_two_pos(start, end);
+                        if area.width() < 4.0 && area.height() < 4.0 {
+                            // A click instead of a drag: finish cropping.
+                            self.toggle_crop_mode();
+                        } else {
+                            self.apply_crop(canvas, area);
+                        }
+                    }
+                }
                 Drag::Marquee { start, additive } => {
                     if let Some(end) = pointer.interact_pos() {
                         let area = Rect::from_two_pos(start, end);
@@ -994,7 +1087,11 @@ impl CoreBoardApp {
         }
 
         // Items, bottom to top.
-        let uv = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
+        if let Some(id) = self.crop_mode
+            && !self.board.items.iter().any(|i| i.id == id)
+        {
+            self.crop_mode = None;
+        }
         let items = self.board.items.clone();
         for item in &items {
             let rect = self.item_screen_rect(canvas, item);
@@ -1005,19 +1102,21 @@ impl CoreBoardApp {
                 // The picker reads original colors, whatever view the image is shown in.
                 self.texture(&ctx, &item.file, Filter::Plain);
             }
+            let cropping = self.crop_mode == Some(item.id);
+            let full = self.full_image_rect(canvas, item);
             match self.texture(&ctx, &item.file, Filter::for_item(item)) {
                 Texture::Ready(tex) => {
-                    if item.rotation == 0 && !item.flip_x {
-                        painter.image(tex.id(), rect, uv, tint);
-                    } else {
-                        painter.add(transformed_image(
-                            tex.id(),
-                            rect,
-                            item.rotation,
-                            item.flip_x,
-                            tint,
-                        ));
+                    let tex = tex.id();
+                    if cropping {
+                        // The parts being cut away, dimmed, around the kept part.
+                        let dim = Color32::from_gray(90).gamma_multiply(opacity);
+                        let whole = Item {
+                            crop: [0.0, 0.0, 1.0, 1.0],
+                            ..item.clone()
+                        };
+                        painter.add(image_shape(tex, full, &whole, dim));
                     }
+                    painter.add(image_shape(tex, rect, item, tint));
                 }
                 Texture::Loading => {
                     painter.rect_filled(
@@ -1039,6 +1138,21 @@ impl CoreBoardApp {
             }
             if item.guide != Guide::None {
                 draw_guide(&painter, rect, item.guide, item.guide_orientation);
+            }
+            if cropping {
+                painter.rect_stroke(
+                    full,
+                    CornerRadius::ZERO,
+                    Stroke::new(1.0, Color32::from_gray(150)),
+                    StrokeKind::Outside,
+                );
+                painter.rect_stroke(
+                    rect,
+                    CornerRadius::ZERO,
+                    Stroke::new(2.0, Color32::WHITE),
+                    StrokeKind::Outside,
+                );
+                continue;
             }
             if self.selection.contains(&item.id) {
                 // Dark halo keeps the outline visible on images of any color.
@@ -1064,8 +1178,8 @@ impl CoreBoardApp {
             self.paint_picker(&painter, canvas, pos);
         }
 
-        // Marquee.
-        if let (Drag::Marquee { start, .. }, Some(end)) =
+        // Marquee or new crop rectangle.
+        if let (Drag::Marquee { start, .. } | Drag::Crop { start }, Some(end)) =
             (&self.drag, ctx.input(|i| i.pointer.interact_pos()))
         {
             let area = Rect::from_two_pos(*start, end);
@@ -1110,6 +1224,8 @@ impl CoreBoardApp {
             },
             if self.board.window.always_on_top {
                 "  ·  on top"
+            } else if self.crop_mode.is_some() {
+                "  ·  CROP: drag over the image, Enter when done"
             } else {
                 ""
             },
@@ -1144,6 +1260,7 @@ impl CoreBoardApp {
                         V / Shift+V            value, saturation, noise, squint\n\
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
+                        X / Shift+X            crop (drag) / reset crop\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -1227,27 +1344,18 @@ impl eframe::App for CoreBoardApp {
     }
 }
 
-/// An image quad whose texture is turned by `quarters` clockwise quarter turns,
+/// An item's image drawn into `rect`: only its crop, turned by its clockwise quarter turns,
 /// then optionally mirrored left-to-right.
-fn transformed_image(
-    texture: egui::TextureId,
-    rect: Rect,
-    quarters: u8,
-    flip_x: bool,
-    tint: Color32,
-) -> egui::Shape {
+fn image_shape(texture: egui::TextureId, rect: Rect, item: &Item, tint: Color32) -> egui::Shape {
+    let (quarters, flip_x) = (item.rotation % 4, item.flip_x);
     let corners = [
         rect.left_top(),
         rect.right_top(),
         rect.right_bottom(),
         rect.left_bottom(),
     ];
-    let uvs = [
-        pos2(0.0, 0.0),
-        pos2(1.0, 0.0),
-        pos2(1.0, 1.0),
-        pos2(0.0, 1.0),
-    ];
+    let [u0, v0, u1, v1] = item.crop;
+    let uvs = [pos2(u0, v0), pos2(u1, v0), pos2(u1, v1), pos2(u0, v1)];
     let mut mesh = egui::Mesh::with_texture(texture);
     for (i, pos) in corners.into_iter().enumerate() {
         // Mirroring swaps left and right corners: 0<->1 (top), 2<->3 (bottom).

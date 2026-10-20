@@ -58,6 +58,14 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
         let path = images_dir.join(&item.file);
         let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
         let mut img = DynamicImage::ImageRgba8(filters::apply(img, Filter::for_item(item)));
+        if item.is_cropped() {
+            let (w, h) = (img.width() as f32, img.height() as f32);
+            let [u0, v0, u1, v1] = item.crop;
+            let (x, y) = ((u0 * w).round() as u32, (v0 * h).round() as u32);
+            let cw = (((u1 - u0) * w).round() as u32).max(1);
+            let ch = (((v1 - v0) * h).round() as u32).max(1);
+            img = img.crop_imm(x, y, cw, ch);
+        }
         img = match item.rotation % 4 {
             1 => img.rotate90(),
             2 => img.rotate180(),

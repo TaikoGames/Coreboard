@@ -33,6 +33,7 @@ The default board lives in your platform's data dir
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
 | Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
+| Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
@@ -54,6 +55,16 @@ exports/     # PNGs made with Ctrl+E
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Cropping
+
+Select one image and press **X**. The whole image shows with the cut-away parts dimmed; drag a
+box over the part you want to keep. You can drag again to refine, even outward to bring back parts
+you cropped off. Press **Enter** or **Esc** (or click without dragging) when done. **Shift+X**
+shows the whole image again.
+
+Cropping is non-destructive: the original file is never changed, and crops survive rotating,
+flipping, study views and export.
 
 ## Study tools
 
