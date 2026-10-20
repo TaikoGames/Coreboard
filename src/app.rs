@@ -15,6 +15,7 @@ use crate::board::{
 use crate::boards;
 use crate::export;
 use crate::filters::{self, Filter};
+use crate::library::{self, Tone};
 
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 50.0;
@@ -43,6 +44,82 @@ type Decoded = (
 /// Color picking reads from copies this size, which is plenty for a single pixel readout.
 const SAMPLE_SIDE: u32 = 1024;
 type Exported = Result<std::path::PathBuf, String>;
+const RADIAL_INNER: f32 = 34.0;
+const RADIAL_OUTER: f32 = 118.0;
+
+/// The radial menu's slices, clockwise from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RadialAction {
+    SimilarValues,
+    SimilarPalette,
+    SearchWeb,
+    Palette,
+    StudyView,
+    Guide,
+    Crop,
+    Note,
+}
+
+impl RadialAction {
+    const ALL: [Self; 8] = [
+        Self::SimilarValues,
+        Self::SimilarPalette,
+        Self::SearchWeb,
+        Self::Palette,
+        Self::StudyView,
+        Self::Guide,
+        Self::Crop,
+        Self::Note,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SimilarValues => "Similar\nvalues",
+            Self::SimilarPalette => "Similar\npalette",
+            Self::SearchWeb => "Search\nweb",
+            Self::Palette => "Extract\npalette",
+            Self::StudyView => "Study\nview",
+            Self::Guide => "Guide",
+            Self::Crop => "Crop",
+            Self::Note => "Note",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FindMode {
+    Values,
+    Palette,
+    Web,
+}
+
+/// State of the Find more window.
+struct Finder {
+    /// The image to find more like.
+    query: u64,
+    mode: FindMode,
+    /// `None` while the boards are being scanned.
+    results: Option<Result<Vec<library::Match>, String>>,
+    subject: String,
+    /// The web color filter, once the user picks one; until then the image's own color.
+    tone: Option<Tone>,
+    suggested: &'static str,
+}
+
+/// (board generation, query image id, query signature and ranked library)
+type Found = (
+    u64,
+    u64,
+    Result<(library::Signature, Vec<library::Match>), String>,
+);
+type Thumb = (std::path::PathBuf, Result<ColorImage, String>);
+
+/// Whether `pos` is over a window or popup rather than the board itself.
+fn over_ui(ctx: &egui::Context, pos: Pos2) -> bool {
+    ctx.layer_id_at(pos)
+        .is_some_and(|l| l.order != egui::Order::Background)
+}
+
 /// (board generation, source image id, its dominant colors)
 type Extracted = (u64, u64, Result<Vec<[u8; 3]>, String>);
 
@@ -106,6 +183,15 @@ pub struct CoreBoardApp {
     generation: u64,
     show_boards: bool,
     new_board_name: String,
+    /// Center of the open radial menu.
+    radial: Option<Pos2>,
+    finder: Option<Finder>,
+    find_tx: Sender<Found>,
+    find_rx: Receiver<Found>,
+    /// Thumbnails of images on other boards, by path.
+    thumbs: HashMap<std::path::PathBuf, Texture>,
+    thumb_tx: Sender<Thumb>,
+    thumb_rx: Receiver<Thumb>,
     recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
 }
@@ -115,6 +201,8 @@ impl CoreBoardApp {
         let (decoded_tx, decoded_rx) = channel();
         let (exported_tx, exported_rx) = channel();
         let (palette_tx, palette_rx) = channel();
+        let (find_tx, find_rx) = channel();
+        let (thumb_tx, thumb_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty();
         Self {
@@ -147,6 +235,13 @@ impl CoreBoardApp {
             generation: 0,
             show_boards: false,
             new_board_name: String::new(),
+            radial: None,
+            finder: None,
+            find_tx,
+            find_rx,
+            thumbs: HashMap::new(),
+            thumb_tx,
+            thumb_rx,
             recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
         }
@@ -1200,6 +1295,403 @@ impl CoreBoardApp {
         }
     }
 
+    // ---------------------------------------------------------------- radial menu
+
+    /// Opens the radial menu at `center`, selecting the image under it if it isn't already.
+    fn open_radial(&mut self, canvas: Rect, center: Pos2) {
+        if let Some(id) = self.hit(canvas, center)
+            && !self.selection.contains(&id)
+        {
+            self.selection = HashSet::from([id]);
+        }
+        self.radial = Some(center);
+    }
+
+    /// The slice the pointer points at, if it has moved far enough from the center.
+    fn radial_choice(&self, pointer: Option<Pos2>) -> Option<RadialAction> {
+        let (center, pos) = (self.radial?, pointer?);
+        let d = pos - center;
+        if d.length() < RADIAL_INNER {
+            return None;
+        }
+        // Slice 0 points straight up; slices go clockwise.
+        let n = RadialAction::ALL.len() as f32;
+        let angle = d.x.atan2(-d.y).rem_euclid(std::f32::consts::TAU);
+        let slice = ((angle / std::f32::consts::TAU * n + 0.5) as usize) % RadialAction::ALL.len();
+        Some(RadialAction::ALL[slice])
+    }
+
+    fn run_radial(&mut self, canvas: Rect, action: RadialAction) {
+        let center = self.radial.unwrap_or(canvas.center());
+        match action {
+            RadialAction::SimilarValues => self.open_finder(FindMode::Values),
+            RadialAction::SimilarPalette => self.open_finder(FindMode::Palette),
+            RadialAction::SearchWeb => self.open_finder(FindMode::Web),
+            RadialAction::Palette => self.extract_palettes(6),
+            RadialAction::StudyView => self.cycle_analysis(true),
+            RadialAction::Guide => self.cycle_guide(),
+            RadialAction::Crop => self.toggle_crop_mode(),
+            RadialAction::Note => self.add_note(canvas, center),
+        }
+    }
+
+    fn paint_radial(&self, ctx: &egui::Context) {
+        let Some(center) = self.radial else { return };
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("coreboard-radial"),
+        ));
+        let chosen = self.radial_choice(ctx.input(|i| i.pointer.hover_pos()));
+        let n = RadialAction::ALL.len();
+        let step = std::f32::consts::TAU / n as f32;
+        painter.circle_filled(center, RADIAL_OUTER + 6.0, Color32::from_black_alpha(150));
+        for (i, action) in RadialAction::ALL.iter().enumerate() {
+            // A wedge from the inner to the outer ring, centered on its direction.
+            let mid = i as f32 * step;
+            let dir = |a: f32| vec2(a.sin(), -a.cos());
+            let mut points = Vec::new();
+            for k in 0..=8 {
+                let a = mid - step / 2.0 + step * k as f32 / 8.0 + 0.01;
+                points.push(center + dir(a) * RADIAL_OUTER);
+            }
+            for k in (0..=8).rev() {
+                let a = mid - step / 2.0 + step * k as f32 / 8.0 + 0.01;
+                points.push(center + dir(a) * RADIAL_INNER);
+            }
+            let fill = if chosen == Some(*action) {
+                ACCENT.gamma_multiply(0.85)
+            } else {
+                Color32::from_rgb(44, 46, 52)
+            };
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                fill,
+                Stroke::new(1.0, Color32::from_gray(25)),
+            ));
+            painter.text(
+                center + dir(mid) * (RADIAL_INNER + RADIAL_OUTER) / 2.0,
+                Align2::CENTER_CENTER,
+                action.label(),
+                FontId::proportional(12.5),
+                Color32::WHITE,
+            );
+        }
+        painter.circle_filled(center, RADIAL_INNER - 6.0, Color32::from_rgb(30, 31, 34));
+        painter.text(
+            center,
+            Align2::CENTER_CENTER,
+            "Q",
+            FontId::proportional(13.0),
+            Color32::from_gray(150),
+        );
+    }
+
+    // ---------------------------------------------------------------- find more
+
+    /// Opens the Find window for the first selected image and starts ranking the library.
+    fn open_finder(&mut self, mode: FindMode) {
+        let Some(item) = self.first_selected() else {
+            self.toast("Select an image to find more like it".into());
+            return;
+        };
+        let (query, file) = (item.id, item.file.clone());
+        let world = Rect::from_min_size(
+            pos2(item.pos[0], item.pos[1]),
+            vec2(item.size[0], item.size[1]),
+        );
+        // Prefill the subject with the title of a frame the image sits in.
+        let subject = self
+            .board
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                Kind::Frame { title } => Some((i, title)),
+                _ => None,
+            })
+            .find(|(f, _)| {
+                Rect::from_min_size(pos2(f.pos[0], f.pos[1]), vec2(f.size[0], f.size[1]))
+                    .contains_rect(world)
+            })
+            .map(|(_, t)| t.clone())
+            .filter(|t| t != "Untitled")
+            .or_else(|| self.finder.as_ref().map(|f| f.subject.clone()))
+            .unwrap_or_default();
+        self.finder = Some(Finder {
+            query,
+            mode,
+            results: None,
+            subject,
+            tone: None,
+            suggested: "gray",
+        });
+        let (tx, dir, generation) = (
+            self.find_tx.clone(),
+            self.store.dir.clone(),
+            self.generation,
+        );
+        std::thread::spawn(move || {
+            let _ = tx.send((generation, query, library::find_similar(&dir, &file)));
+        });
+    }
+
+    fn receive_finds(&mut self) {
+        while let Ok((generation, query, result)) = self.find_rx.try_recv() {
+            let Some(finder) = self.finder.as_mut() else {
+                continue;
+            };
+            if generation != self.generation || finder.query != query {
+                continue;
+            }
+            finder.results = Some(result.map(|(sig, matches)| {
+                finder.suggested = library::color_name(&sig.palette);
+                matches
+            }));
+        }
+    }
+
+    /// A small texture for a library result, loaded in the background.
+    fn thumb(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureId> {
+        if !self.thumbs.contains_key(path) {
+            self.thumbs.insert(path.to_path_buf(), Texture::Loading);
+            let (tx, ctx, path) = (self.thumb_tx.clone(), ctx.clone(), path.to_path_buf());
+            std::thread::spawn(move || {
+                let result = image::open(&path).map_err(|e| e.to_string()).map(|img| {
+                    let rgba = img.thumbnail(220, 220).to_rgba8();
+                    let size = [rgba.width() as usize, rgba.height() as usize];
+                    ColorImage::from_rgba_unmultiplied(size, rgba.as_raw())
+                });
+                let _ = tx.send((path, result));
+                ctx.request_repaint();
+            });
+        }
+        match &self.thumbs[path] {
+            Texture::Ready(tex) => Some(tex.id()),
+            _ => None,
+        }
+    }
+
+    fn receive_thumbs(&mut self, ctx: &egui::Context) {
+        while let Ok((path, result)) = self.thumb_rx.try_recv() {
+            let tex = match result {
+                Ok(img) => Texture::Ready(ctx.load_texture(
+                    path.display().to_string(),
+                    img,
+                    TextureOptions::LINEAR,
+                )),
+                Err(err) => Texture::Failed(err),
+            };
+            self.thumbs.insert(path, tex);
+        }
+    }
+
+    fn finder_window(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let Some(mut finder) = self.finder.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut add: Option<std::path::PathBuf> = None;
+        egui::Window::new("Find more")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(372.0)
+            .anchor(Align2::RIGHT_TOP, vec2(-12.0, 12.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut finder.mode, FindMode::Values, "Similar values");
+                    ui.selectable_value(&mut finder.mode, FindMode::Palette, "Similar palette");
+                    ui.selectable_value(&mut finder.mode, FindMode::Web, "Search the web");
+                });
+                ui.separator();
+                match finder.mode {
+                    FindMode::Values | FindMode::Palette => {
+                        add = self.finder_results(ui, &finder);
+                    }
+                    FindMode::Web => self.finder_web(ui, &mut finder),
+                }
+            });
+        if let Some(path) = add {
+            self.add_from_library(canvas, finder.query, &path);
+        }
+        if open {
+            self.finder = Some(finder);
+        }
+    }
+
+    /// The ranked thumbnails. Returns a result the user clicked, to copy onto this board.
+    fn finder_results(&mut self, ui: &mut egui::Ui, finder: &Finder) -> Option<std::path::PathBuf> {
+        let what = if finder.mode == FindMode::Values {
+            "value structure"
+        } else {
+            "colors"
+        };
+        ui.label(
+            egui::RichText::new(format!(
+                "Images on your other boards ranked by {what}. Click one to copy it here."
+            ))
+            .small()
+            .weak(),
+        );
+        let matches = match &finder.results {
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Scanning your boards…");
+                });
+                return None;
+            }
+            Some(Err(err)) => {
+                ui.label(format!("Couldn't read this image: {err}"));
+                return None;
+            }
+            Some(Ok(matches)) if matches.is_empty() => {
+                ui.label(
+                    "No images on your other boards yet. Make more boards with Ctrl+O and drop \
+                     references in; they'll show up here.",
+                );
+                return None;
+            }
+            Some(Ok(matches)) => matches,
+        };
+        let score = |m: &library::Match| match finder.mode {
+            FindMode::Palette => m.palette,
+            _ => m.values,
+        };
+        let mut ranked: Vec<&library::Match> = matches.iter().collect();
+        ranked.sort_by(|a, b| score(b).total_cmp(&score(a)));
+        let mut clicked = None;
+        let ctx = ui.ctx().clone();
+        egui::ScrollArea::vertical()
+            .max_height(440.0)
+            .show(ui, |ui| {
+                egui::Grid::new("find-results")
+                    .spacing(vec2(8.0, 8.0))
+                    .show(ui, |ui| {
+                        for (i, m) in ranked.iter().take(30).enumerate() {
+                            ui.vertical(|ui| {
+                                let size = Vec2::splat(108.0);
+                                let response = match self.thumb(&ctx, &m.path) {
+                                    Some(tex) => ui.add(
+                                        egui::Button::image(
+                                            egui::Image::new((tex, size))
+                                                .fit_to_exact_size(size)
+                                                .maintain_aspect_ratio(true),
+                                        )
+                                        .frame(false),
+                                    ),
+                                    None => ui.add_sized(size, egui::Spinner::new()),
+                                };
+                                if response
+                                    .on_hover_text(format!(
+                                        "From {}\nClick to copy onto this board",
+                                        boards::display_name(&m.board)
+                                    ))
+                                    .clicked()
+                                {
+                                    clicked = Some(m.path.clone());
+                                }
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{:.0}% · {}",
+                                        score(m) * 100.0,
+                                        boards::display_name(&m.board)
+                                    ))
+                                    .small(),
+                                );
+                            });
+                            if i % 3 == 2 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+            });
+        clicked
+    }
+
+    fn finder_web(&mut self, ui: &mut egui::Ui, finder: &mut Finder) {
+        ui.label(
+            egui::RichText::new("Opens an image search in your browser.")
+                .small()
+                .weak(),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut finder.subject)
+                .hint_text("Subject, e.g. oak tree at dusk")
+                .desired_width(340.0),
+        );
+        let tone = finder.tone.unwrap_or(Tone::Color(finder.suggested));
+        let label = |t: Tone| match t {
+            Tone::Any => "Any color".to_string(),
+            Tone::BlackAndWhite => "Black & white".to_string(),
+            Tone::Color(c) if c == finder.suggested => format!("{c} (from this image)"),
+            Tone::Color(c) => c.to_string(),
+        };
+        let mut chosen = tone;
+        ui.horizontal(|ui| {
+            ui.label("Color");
+            egui::ComboBox::from_id_salt("web-tone")
+                .selected_text(label(tone))
+                .show_ui(ui, |ui| {
+                    let mut options = vec![
+                        Tone::Color(finder.suggested),
+                        Tone::BlackAndWhite,
+                        Tone::Any,
+                    ];
+                    options.extend(
+                        library::COLOR_NAMES
+                            .iter()
+                            .filter(|&&c| c != finder.suggested)
+                            .map(|&c| Tone::Color(c)),
+                    );
+                    for option in options {
+                        ui.selectable_value(&mut chosen, option, label(option));
+                    }
+                });
+        });
+        if chosen != tone {
+            finder.tone = Some(chosen);
+        }
+        ui.add_space(4.0);
+        let ready = !finder.subject.trim().is_empty();
+        ui.horizontal_wrapped(|ui| {
+            for site in library::Site::ALL {
+                if ui
+                    .add_enabled(ready, egui::Button::new(site.label()))
+                    .clicked()
+                {
+                    let url = library::search_url(site, &finder.subject, chosen);
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                }
+            }
+        });
+        if !ready {
+            ui.label(
+                egui::RichText::new("Type a subject to search.")
+                    .small()
+                    .weak(),
+            );
+        }
+    }
+
+    /// Copies a library image onto this board, next to the image it was found from.
+    fn add_from_library(&mut self, canvas: Rect, query: u64, path: &Path) {
+        let Ok(bytes) = std::fs::read(path) else {
+            self.toast(format!("Can't read {}", path.display()));
+            return;
+        };
+        let at = self
+            .board
+            .items
+            .iter()
+            .find(|i| i.id == query)
+            .map(|i| {
+                let r = self.item_screen_rect(canvas, i);
+                r.right_center() + vec2(r.width() * 0.6, 0.0)
+            })
+            .unwrap_or(canvas.center());
+        self.import_all(canvas, at, vec![(bytes, Some(path))]);
+    }
+
     // ---------------------------------------------------------------- boards
 
     fn open_boards_window(&mut self) {
@@ -1307,6 +1799,8 @@ impl CoreBoardApp {
         self.redo.clear();
         self.drag = Drag::None;
         self.crop_mode = None;
+        self.radial = None;
+        self.finder = None;
         self.dirty_since = None;
         self.show_help = self.board.items.is_empty();
         self.window_level_sent = false;
@@ -1363,6 +1857,23 @@ impl CoreBoardApp {
         for event in events.iter().filter(|_| !typing) {
             match event {
                 Event::Paste(text) => paste_requested = Some(Some(text.clone())),
+                // Hold Q for the radial menu; releasing it picks the slice pointed at.
+                Event::Key {
+                    key: Key::Q,
+                    pressed,
+                    repeat,
+                    modifiers: m,
+                    ..
+                } if !m.command => {
+                    if *pressed && !*repeat && self.radial.is_none() {
+                        self.open_radial(canvas, anchor);
+                    } else if !*pressed && self.radial.is_some() {
+                        if let Some(action) = self.radial_choice(pointer.hover_pos()) {
+                            self.run_radial(canvas, action);
+                        }
+                        self.radial = None;
+                    }
+                }
                 Event::Key {
                     key: Key::V,
                     pressed: true,
@@ -1406,6 +1917,7 @@ impl CoreBoardApp {
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::Escape if self.crop_mode.is_some() => self.toggle_crop_mode(),
+                    Key::Escape if self.radial.is_some() => self.radial = None,
                     Key::I if !m.command => {
                         self.picker = !self.picker;
                         let state = if self.picker {
@@ -1443,7 +1955,7 @@ impl CoreBoardApp {
         }
 
         // Zoom: wheel or trackpad pinch, anchored at the cursor.
-        if let Some(pos) = hover {
+        if let Some(pos) = hover.filter(|p| !over_ui(&ctx, *p)) {
             let factor = (scroll.y * 0.0025).exp() * pinch;
             if (factor - 1.0).abs() > f32::EPSILON {
                 self.zoom_around(canvas, pos, self.board.view.zoom * factor);
@@ -1458,11 +1970,25 @@ impl CoreBoardApp {
                 button,
                 pressed: true,
                 ..
-            } if canvas.contains(*pos) && !self.edit_rect.is_some_and(|r| r.contains(*pos)) => {
+            } if canvas.contains(*pos)
+                && !self.edit_rect.is_some_and(|r| r.contains(*pos))
+                && !over_ui(&ctx, *pos) =>
+            {
                 Some((*pos, *button))
             }
             _ => None,
         });
+        // With the radial menu open, a click picks a slice (or closes it) instead.
+        let press = match (self.radial.is_some(), press) {
+            (true, Some((pos, _))) => {
+                if let Some(action) = self.radial_choice(Some(pos)) {
+                    self.run_radial(canvas, action);
+                }
+                self.radial = None;
+                None
+            }
+            (_, press) => press,
+        };
         if let Some((pos, button)) = press
             && matches!(self.drag, Drag::None)
         {
@@ -1611,6 +2137,7 @@ impl CoreBoardApp {
         if pointer.button_double_clicked(egui::PointerButton::Primary)
             && let Some(pos) = pointer.interact_pos().filter(|p| canvas.contains(*p))
             && !self.edit_rect.is_some_and(|r| r.contains(pos))
+            && !over_ui(&ctx, pos)
             && let Some(id) = self.hit(canvas, pos)
         {
             self.begin_edit(id, false);
@@ -1852,6 +2379,7 @@ impl CoreBoardApp {
                         T                      always on top\n\
                         Ctrl+E                 export PNG (+ watermark)\n\
                         Ctrl+O                 boards: new, open, recent\n\
+                        Hold Q                 radial menu: find similar, web…\n\
                         V / Shift+V            value, saturation, noise, squint\n\
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
@@ -1916,8 +2444,12 @@ impl eframe::App for CoreBoardApp {
         }
         self.paint(ui, canvas);
         self.edit_overlay(&ctx, canvas);
+        self.finder_window(&ctx, canvas);
+        self.paint_radial(&ctx);
         self.export_dialog(&ctx);
         self.boards_window(&ctx);
+        self.receive_finds();
+        self.receive_thumbs(&ctx);
         self.receive_exports();
         self.receive_palettes();
 

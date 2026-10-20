@@ -150,6 +150,14 @@ fn map_pixels(mut img: RgbaImage, f: impl Fn([u8; 3]) -> [u8; 3]) -> RgbaImage {
 /// The `k` dominant colors of an image, most common first, via k-means on a small copy.
 /// Fully transparent pixels are ignored.
 pub fn palette(img: &RgbaImage, k: usize) -> Vec<[u8; 3]> {
+    weighted_palette(img, k)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect()
+}
+
+/// Like [`palette`], with each color's share of the image (the shares sum to 1).
+pub fn weighted_palette(img: &RgbaImage, k: usize) -> Vec<([u8; 3], f32)> {
     let small = if img.width().max(img.height()) > 160 {
         imageops::thumbnail(img, 160, 160)
     } else {
@@ -228,7 +236,11 @@ pub fn palette(img: &RgbaImage, k: usize) -> Vec<[u8; 3]> {
         .map(|(c, &count)| (count, c.map(|v| v.round().clamp(0.0, 255.0) as u8)))
         .collect();
     ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
-    ranked.into_iter().map(|(_, c)| c).collect()
+    let total = pixels.len() as f32;
+    ranked
+        .into_iter()
+        .map(|(count, c)| (c, count as f32 / total))
+        .collect()
 }
 
 // ---------------------------------------------------------------- color math
@@ -250,6 +262,23 @@ pub fn hsv(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
         60.0 * ((r - g) / d + 4.0)
     };
     (h, s, max)
+}
+
+/// CIE L*a*b* (D65), for color distances that match what the eye sees.
+pub fn lab([r, g, b]: [u8; 3]) -> [f32; 3] {
+    let (r, g, b) = (srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b));
+    let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+    let f = |t: f32| {
+        if t > 216.0 / 24389.0 {
+            t.cbrt()
+        } else {
+            (24389.0 / 27.0 * t + 16.0) / 116.0
+        }
+    };
+    let (fx, fy, fz) = (f(x), f(y), f(z));
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
 }
 
 /// Perceptual lightness, CIE L*, 0 (black) ..= 100 (white).

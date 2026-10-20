@@ -32,6 +32,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Grayscale | **B** (black & white, toggles) |
 | Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
 | Always on top | **T** (toggles) |
+| Radial menu | **Hold Q**, point at an option, release (find similar, web search, palette, study view, guide, crop, note) |
 | Boards | **Ctrl+O**: new, open folder, recent boards |
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
@@ -58,11 +59,31 @@ A board is a plain folder:
 board.json   # layout: positions, sizes, stacking order, view, settings
 images/      # a copy of every image, named by content hash (duplicates are stored once)
 exports/     # PNGs made with Ctrl+E
+signatures.json  # cached value/palette signatures for Find more
 ```
 
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Find more pictures
+
+Hold **Q** over an image to open the **radial menu**, point at an option and let go (or click it;
+**Esc** closes it). Its first three options open the **Find more** window for that image:
+
+- **Similar values** ranks every image on your other boards by value structure: an 8×8 grid of
+  perceptual lightness (L*), so images with the same big light and dark masses come first.
+  Mirror images count as matches.
+- **Similar palette** ranks them by colors: each palette color is matched to its nearest
+  counterpart (CIE Lab distance), weighted by how much of the image it covers.
+- **Search the web** opens Google Images, Unsplash, Pinterest or ArtStation in your browser for a
+  subject you type (prefilled from the frame the image sits in). It's filtered by the image's main
+  color, or black & white, or any color you pick, where the site supports filters.
+
+Click a result to copy it onto the current board next to the original. Matching runs offline. The
+first search computes a small signature for each image and caches it in each board's
+`signatures.json`, so later searches are fast. Subjects aren't recognized automatically (that would
+need a large AI model), which is why web searches use the words you type.
 
 ## Notes and frames
 

@@ -3,6 +3,7 @@ mod board;
 mod boards;
 mod export;
 mod filters;
+mod library;
 
 use std::path::PathBuf;
 
