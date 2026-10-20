@@ -335,6 +335,9 @@ pub struct Board {
     pub window: WindowSettings,
     #[serde(default)]
     pub watermark: Watermark,
+    /// Where PNG exports go; `None` means the board's own `exports/` folder.
+    #[serde(default)]
+    pub export_dir: Option<PathBuf>,
 }
 
 pub struct Store {

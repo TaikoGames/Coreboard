@@ -12,6 +12,7 @@ use crate::board::{
     self, Analysis, Board, FRAME_FONT, FRAME_TITLE_HEIGHT, Guide, Item, Kind, NOTE_COLORS,
     NOTE_FONT, NOTE_PAD, Store, WatermarkPosition,
 };
+use crate::boards;
 use crate::export;
 use crate::filters::{self, Filter};
 
@@ -42,8 +43,8 @@ type Decoded = (
 /// Color picking reads from copies this size, which is plenty for a single pixel readout.
 const SAMPLE_SIDE: u32 = 1024;
 type Exported = Result<std::path::PathBuf, String>;
-/// (source image id, its dominant colors)
-type Extracted = (u64, Result<Vec<[u8; 3]>, String>);
+/// (board generation, source image id, its dominant colors)
+type Extracted = (u64, u64, Result<Vec<[u8; 3]>, String>);
 
 enum Drag {
     None,
@@ -101,6 +102,11 @@ pub struct CoreBoardApp {
     exported_rx: Receiver<Exported>,
     palette_tx: Sender<Extracted>,
     palette_rx: Receiver<Extracted>,
+    /// Bumped on every board switch, so late background results for the old board are dropped.
+    generation: u64,
+    show_boards: bool,
+    new_board_name: String,
+    recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -138,6 +144,10 @@ impl CoreBoardApp {
             exported_rx,
             palette_tx,
             palette_rx,
+            generation: 0,
+            show_boards: false,
+            new_board_name: String::new(),
+            recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
         }
     }
@@ -439,6 +449,7 @@ impl CoreBoardApp {
             self.toast("Select images to extract colors from".into());
             return;
         }
+        let generation = self.generation;
         for (id, path, crop) in sources {
             let tx = self.palette_tx.clone();
             std::thread::spawn(move || {
@@ -452,7 +463,7 @@ impl CoreBoardApp {
                     let ch = (((v1 - v0) * h) as u32).max(1);
                     filters::palette(&img.crop_imm(x, y, cw, ch).to_rgba8(), count)
                 });
-                let _ = tx.send((id, result));
+                let _ = tx.send((generation, id, result));
             });
         }
         self.toast("Extracting colors…".into());
@@ -460,7 +471,10 @@ impl CoreBoardApp {
 
     fn receive_palettes(&mut self) {
         let mut first = true;
-        while let Ok((source, result)) = self.palette_rx.try_recv() {
+        while let Ok((generation, source, result)) = self.palette_rx.try_recv() {
+            if generation != self.generation {
+                continue;
+            }
             let colors = match result {
                 Ok(colors) if !colors.is_empty() => colors,
                 Ok(_) => continue,
@@ -1113,14 +1127,24 @@ impl CoreBoardApp {
                         .clicked();
                     close |= ui.button("Cancel").clicked();
                 });
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Saved to {}",
-                        self.store.dir.join("exports").display()
-                    ))
-                    .small()
-                    .weak(),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Saved to {}", self.export_dir().display()))
+                            .small()
+                            .weak(),
+                    );
+                    if ui.small_button("Change…").clicked()
+                        && let Some(dir) = rfd::FileDialog::new()
+                            .set_title("Folder for exports")
+                            .set_directory(self.export_dir())
+                            .pick_folder()
+                    {
+                        self.board.export_dir = Some(dir);
+                    }
+                    if self.board.export_dir.is_some() && ui.small_button("Reset").clicked() {
+                        self.board.export_dir = None;
+                    }
+                });
             });
 
         if export && !self.exporting {
@@ -1144,7 +1168,7 @@ impl CoreBoardApp {
             .cloned()
             .collect();
         let images_dir = self.store.dir.join("images");
-        let out_dir = self.store.dir.join("exports");
+        let out_dir = self.export_dir();
         let watermark = self.board.watermark.clone();
         let tx = self.exported_tx.clone();
         self.exporting = true;
@@ -1159,6 +1183,13 @@ impl CoreBoardApp {
         });
     }
 
+    fn export_dir(&self) -> std::path::PathBuf {
+        self.board
+            .export_dir
+            .clone()
+            .unwrap_or_else(|| self.store.dir.join("exports"))
+    }
+
     fn receive_exports(&mut self) {
         if let Ok(result) = self.exported_rx.try_recv() {
             self.exporting = false;
@@ -1167,6 +1198,125 @@ impl CoreBoardApp {
                 Err(err) => self.toast(format!("Export failed: {err}")),
             }
         }
+    }
+
+    // ---------------------------------------------------------------- boards
+
+    fn open_boards_window(&mut self) {
+        self.finish_edit();
+        self.recent = boards::recent();
+        self.show_boards = true;
+    }
+
+    fn boards_window(&mut self, ctx: &egui::Context) {
+        if !self.show_boards {
+            return;
+        }
+        let mut open: Option<std::path::PathBuf> = None;
+        let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
+        let current = self
+            .store
+            .dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.store.dir.clone());
+        egui::Window::new("Boards")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(boards::display_name(&current)).strong());
+                ui.label(
+                    egui::RichText::new(current.display().to_string())
+                        .small()
+                        .weak(),
+                );
+                ui.separator();
+
+                ui.label("New board");
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.new_board_name)
+                            .hint_text("Name, e.g. Character refs")
+                            .desired_width(220.0),
+                    );
+                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let name = boards::folder_name(&self.new_board_name);
+                    if (ui
+                        .add_enabled(name.is_some(), egui::Button::new("Create"))
+                        .clicked()
+                        || enter)
+                        && let Some(name) = name
+                    {
+                        open = Some(boards::boards_root().join(name));
+                    }
+                });
+                if ui.button("Open or create in a folder…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new()
+                        .set_title("Board folder")
+                        .pick_folder()
+                {
+                    open = Some(dir);
+                }
+                ui.separator();
+
+                ui.label("Recent");
+                let others: Vec<_> = self.recent.iter().filter(|p| **p != current).collect();
+                if others.is_empty() {
+                    ui.label(egui::RichText::new("No other boards yet").weak());
+                }
+                for dir in others {
+                    let response = ui
+                        .button(boards::display_name(dir))
+                        .on_hover_text(dir.display().to_string());
+                    if response.clicked() {
+                        open = Some(dir.clone());
+                    }
+                }
+                ui.add_space(6.0);
+                close |= ui.button("Close").clicked();
+            });
+        if let Some(dir) = open {
+            self.switch_board(ctx, dir);
+            close = true;
+        }
+        if close {
+            self.show_boards = false;
+        }
+    }
+
+    /// Saves the current board and opens (or creates) the board in `dir`.
+    fn switch_board(&mut self, ctx: &egui::Context, dir: std::path::PathBuf) {
+        let store = match Store::open(dir.clone()) {
+            Ok(store) => store,
+            Err(err) => {
+                self.toast(format!("Can't open {}: {err}", dir.display()));
+                return;
+            }
+        };
+        self.finish_edit();
+        self.save_now();
+        self.store.collect_garbage(&self.board);
+
+        self.board = store.load();
+        self.store = store;
+        self.generation += 1;
+        self.textures.clear();
+        self.samples.clear();
+        self.selection.clear();
+        self.undo.clear();
+        self.redo.clear();
+        self.drag = Drag::None;
+        self.crop_mode = None;
+        self.dirty_since = None;
+        self.show_help = self.board.items.is_empty();
+        self.window_level_sent = false;
+        self.new_board_name.clear();
+        boards::remember(&self.store.dir);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "Core Board — {}",
+            self.store.dir.display()
+        )));
+        self.toast(format!("Opened {}", boards::display_name(&self.store.dir)));
     }
 
     // ---------------------------------------------------------------- persistence
@@ -1235,6 +1385,7 @@ impl CoreBoardApp {
                     Key::Z if m.command => self.undo(),
                     Key::Y if m.command => self.redo(),
                     Key::E if m.command => self.show_export = !self.board.items.is_empty(),
+                    Key::O if m.command => self.open_boards_window(),
                     Key::S if m.command => {
                         self.save_now();
                         self.toast("Saved".into());
@@ -1700,6 +1851,7 @@ impl CoreBoardApp {
                         [ / ]                  window opacity\n\
                         T                      always on top\n\
                         Ctrl+E                 export PNG (+ watermark)\n\
+                        Ctrl+O                 boards: new, open, recent\n\
                         V / Shift+V            value, saturation, noise, squint\n\
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
@@ -1758,13 +1910,14 @@ impl eframe::App for CoreBoardApp {
             ui.scope_id().with("canvas"),
             Sense::click_and_drag(),
         );
-        // The export dialog is modal: the board ignores input while it is open.
-        if !self.show_export {
+        // Dialogs are modal: the board ignores input while one is open.
+        if !self.show_export && !self.show_boards {
             self.handle_input(ui, canvas);
         }
         self.paint(ui, canvas);
         self.edit_overlay(&ctx, canvas);
         self.export_dialog(&ctx);
+        self.boards_window(&ctx);
         self.receive_exports();
         self.receive_palettes();
 

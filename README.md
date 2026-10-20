@@ -6,13 +6,16 @@ Drop images on an infinite canvas, arrange and resize them, and they're saved au
 ## Run
 
 ```sh
-cargo run --release              # opens your default board
+cargo run --release              # reopens the board you used last
 cargo run --release -- ~/boards/moodboard   # open (or create) a board in any folder
 ```
 
-The default board lives in your platform's data dir
-(`~/.local/share/coreboard/default` on Linux, `~/Library/Application Support/coreboard/default` on macOS,
-`%APPDATA%\coreboard\data\default` on Windows).
+Press **Ctrl+O** for the **Boards** window: create a board by name, open or create one in any folder
+(native folder picker), or jump back to a recent board. Switching saves the current board first.
+
+Boards created by name, and the first default board, live in your platform's data dir
+(`~/.local/share/coreboard/` on Linux, `~/Library/Application Support/coreboard/` on macOS,
+`%APPDATA%\coreboard\data\` on Windows). The recent list is kept in the matching config dir.
 
 ## Controls
 
@@ -29,6 +32,7 @@ The default board lives in your platform's data dir
 | Grayscale | **B** (black & white, toggles) |
 | Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
 | Always on top | **T** (toggles) |
+| Boards | **Ctrl+O**: new, open folder, recent boards |
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
@@ -123,8 +127,8 @@ from the original files, so the export is full quality with rotation, flip and g
 - **Opacity**: 10–100%.
 
 The text gets a soft shadow so it reads on light and dark images. Your watermark settings are saved
-with the board, and exports go to the board's `exports/` folder as `coreboard-<date>-<time>.png`
-(UTC). Very large boards are scaled down to fit 8192 px.
+with the board. Exports go to the board's `exports/` folder as `coreboard-<date>-<time>.png` (UTC);
+use **Change…** in the dialog to pick another folder for this board (**Reset** goes back). Very large boards are scaled down to fit 8192 px.
 
 ## Overlay mode
 
@@ -133,6 +137,9 @@ trace or match colors against reference while you work. Both settings are saved 
 On Linux, see-through windows need a compositing desktop (GNOME, KDE and most others have one).
 
 ## Linux build notes
+
+The folder picker uses the desktop's file chooser portal (`xdg-desktop-portal`), which GNOME, KDE
+and most desktops run already.
 
 Needs the usual windowing libraries at runtime (`libxkbcommon-x11`, a Vulkan or GL driver), which any
 desktop install already has.

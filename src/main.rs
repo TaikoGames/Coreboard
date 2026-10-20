@@ -1,14 +1,17 @@
 mod app;
 mod board;
+mod boards;
 mod export;
 mod filters;
 
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
+    // A folder given on the command line, else the board used last, else the default one.
     let dir = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
+        .or_else(|| boards::recent().into_iter().next())
         .unwrap_or_else(board::default_board_dir);
 
     let store = match board::Store::open(dir.clone()) {
@@ -18,6 +21,7 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
+    boards::remember(&dir);
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
