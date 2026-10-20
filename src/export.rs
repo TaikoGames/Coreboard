@@ -10,7 +10,7 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 use image::imageops::{self, FilterType};
 use image::{DynamicImage, Rgba, RgbaImage};
 
-use crate::board::{Item, Watermark, WatermarkPosition};
+use crate::board::{Item, Kind, Watermark, WatermarkPosition};
 use crate::filters::{self, Filter};
 
 /// Exports larger than this on either side are scaled down to fit.
@@ -54,7 +54,20 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
     let height = ((content[1] + 2.0 * PADDING) * scale).round().max(1.0) as u32;
     let mut canvas = RgbaImage::from_pixel(width, height, BACKGROUND);
 
+    let font =
+        FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).expect("bundled font is valid");
     for item in items {
+        let x = ((item.pos[0] - min[0] + PADDING) * scale).round() as i64;
+        let y = ((item.pos[1] - min[1] + PADDING) * scale).round() as i64;
+        let w = (item.size[0] * scale).round().max(1.0) as u32;
+        let h = (item.size[1] * scale).round().max(1.0) as u32;
+        match &item.kind {
+            Kind::Image => {}
+            Kind::Palette { colors } => {
+                draw_palette(&mut canvas, &font, (x, y, w, h), colors);
+                continue;
+            }
+        }
         let path = images_dir.join(&item.file);
         let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
         let mut img = DynamicImage::ImageRgba8(filters::apply(img, Filter::for_item(item)));
@@ -75,11 +88,7 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
         if item.flip_x {
             img = img.fliph();
         }
-        let w = (item.size[0] * scale).round().max(1.0) as u32;
-        let h = (item.size[1] * scale).round().max(1.0) as u32;
         let img = img.resize_exact(w, h, FilterType::CatmullRom).to_rgba8();
-        let x = ((item.pos[0] - min[0] + PADDING) * scale).round() as i64;
-        let y = ((item.pos[1] - min[1] + PADDING) * scale).round() as i64;
         imageops::overlay(&mut canvas, &img, x, y);
     }
 
@@ -88,6 +97,69 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
         stamp(&mut canvas, text, watermark);
     }
     Ok(canvas)
+}
+
+/// Same layout as on the board: equal swatches along the longer side, labeled when big enough.
+fn draw_palette(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    colors: &[[u8; 3]],
+) {
+    let n = colors.len().max(1) as f32;
+    let horizontal = w >= h;
+    for (i, &[r, g, b]) in colors.iter().enumerate() {
+        let (sx, sy, sw, sh) = if horizontal {
+            let step = w as f32 / n;
+            (
+                x + (step * i as f32).round() as i64,
+                y,
+                step.ceil() as u32,
+                h,
+            )
+        } else {
+            let step = h as f32 / n;
+            (
+                x,
+                y + (step * i as f32).round() as i64,
+                w,
+                step.ceil() as u32,
+            )
+        };
+        fill_rect(canvas, (sx, sy, sw, sh), [r, g, b]);
+        let side = sw.min(sh) as f32;
+        if side >= 52.0 {
+            let l = filters::lightness(r, g, b);
+            let ink = if l > 60.0 {
+                [20, 20, 20]
+            } else {
+                [245, 245, 245]
+            };
+            let px = (side * 0.13).clamp(9.0, 28.0);
+            let hex = Line::layout(font, &format!("#{r:02X}{g:02X}{b:02X}"), px);
+            let value = Line::layout(font, &format!("L* {l:.0}"), px);
+            let left = sx as f32 + px * 0.5;
+            let bottom = (sy + sh as i64) as f32 - px * 0.5;
+            value.draw(font, canvas, left, bottom - value.height, ink, 0.9);
+            hex.draw(
+                font,
+                canvas,
+                left,
+                bottom - value.height - hex.height,
+                ink,
+                0.9,
+            );
+        }
+    }
+}
+
+fn fill_rect(canvas: &mut RgbaImage, (x, y, w, h): (i64, i64, u32, u32), [r, g, b]: [u8; 3]) {
+    let (cw, ch) = (canvas.width() as i64, canvas.height() as i64);
+    for py in y.max(0)..(y + h as i64).min(ch) {
+        for px in x.max(0)..(x + w as i64).min(cw) {
+            canvas.put_pixel(px as u32, py as u32, Rgba([r, g, b, 255]));
+        }
+    }
 }
 
 /// Draws the watermark text, with a soft shadow so it reads on light and dark images alike.

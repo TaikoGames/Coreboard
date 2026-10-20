@@ -145,6 +145,92 @@ fn map_pixels(mut img: RgbaImage, f: impl Fn([u8; 3]) -> [u8; 3]) -> RgbaImage {
     img
 }
 
+// ---------------------------------------------------------------- palettes
+
+/// The `k` dominant colors of an image, most common first, via k-means on a small copy.
+/// Fully transparent pixels are ignored.
+pub fn palette(img: &RgbaImage, k: usize) -> Vec<[u8; 3]> {
+    let small = if img.width().max(img.height()) > 160 {
+        imageops::thumbnail(img, 160, 160)
+    } else {
+        img.clone()
+    };
+    let pixels: Vec<[f32; 3]> = small
+        .pixels()
+        .filter(|p| p[3] > 16)
+        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+        .collect();
+    if pixels.is_empty() || k == 0 {
+        return Vec::new();
+    }
+    let dist = |a: &[f32; 3], b: &[f32; 3]| {
+        (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
+    };
+
+    // Deterministic farthest-point seeding: start at the mean, then repeatedly take the
+    // pixel farthest from every chosen center. Spreads seeds across distinct colors.
+    let n = pixels.len() as f32;
+    let mean = pixels.iter().fold([0.0; 3], |acc, p| {
+        [acc[0] + p[0] / n, acc[1] + p[1] / n, acc[2] + p[2] / n]
+    });
+    let mut centers = vec![mean];
+    let mut nearest: Vec<f32> = pixels.iter().map(|p| dist(p, &mean)).collect();
+    while centers.len() < k {
+        let (i, &d) = nearest
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap();
+        if d < 1.0 {
+            break; // Fewer distinct colors than requested.
+        }
+        let c = pixels[i];
+        for (p, best) in pixels.iter().zip(nearest.iter_mut()) {
+            *best = best.min(dist(p, &c));
+        }
+        centers.push(c);
+    }
+
+    let mut counts = vec![0usize; centers.len()];
+    for _ in 0..20 {
+        let mut sums = vec![[0.0f32; 3]; centers.len()];
+        counts.iter_mut().for_each(|c| *c = 0);
+        for p in &pixels {
+            let (j, _) = centers
+                .iter()
+                .enumerate()
+                .map(|(j, c)| (j, dist(p, c)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap();
+            counts[j] += 1;
+            for c in 0..3 {
+                sums[j][c] += p[c];
+            }
+        }
+        let mut moved = 0.0f32;
+        for (j, center) in centers.iter_mut().enumerate() {
+            if counts[j] > 0 {
+                let m = counts[j] as f32;
+                let next = [sums[j][0] / m, sums[j][1] / m, sums[j][2] / m];
+                moved = moved.max(dist(center, &next));
+                *center = next;
+            }
+        }
+        if moved < 0.25 {
+            break;
+        }
+    }
+
+    let mut ranked: Vec<(usize, [u8; 3])> = centers
+        .iter()
+        .zip(&counts)
+        .filter(|&(_, &count)| count > 0)
+        .map(|(c, &count)| (count, c.map(|v| v.round().clamp(0.0, 255.0) as u8)))
+        .collect();
+    ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
+    ranked.into_iter().map(|(_, c)| c).collect()
+}
+
 // ---------------------------------------------------------------- color math
 
 /// HSV as a painter's color picker shows it: hue 0..360, saturation and value 0..1.
@@ -231,6 +317,24 @@ mod tests {
         assert_eq!(tones.len(), 3);
         // Dark to light.
         assert!(tones[0] < tones[1] && tones[1] < tones[2]);
+    }
+
+    #[test]
+    fn palette_finds_the_main_colors_most_common_first() {
+        // 60% red, 30% blue, 10% white.
+        let img = RgbaImage::from_fn(100, 10, |x, _| match x {
+            0..60 => Rgba([220, 30, 30, 255]),
+            60..90 => Rgba([20, 40, 200, 255]),
+            _ => Rgba([255, 255, 255, 255]),
+        });
+        let colors = palette(&img, 3);
+        assert_eq!(colors, vec![[220, 30, 30], [20, 40, 200], [255, 255, 255]]);
+    }
+
+    #[test]
+    fn palette_stops_at_the_number_of_distinct_colors() {
+        let img = RgbaImage::from_pixel(20, 20, Rgba([10, 200, 90, 255]));
+        assert_eq!(palette(&img, 6), vec![[10, 200, 90]]);
     }
 
     #[test]

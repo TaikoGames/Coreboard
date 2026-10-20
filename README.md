@@ -33,6 +33,7 @@ The default board lives in your platform's data dir
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
 | Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
+| Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
@@ -55,6 +56,13 @@ exports/     # PNGs made with Ctrl+E
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Color palettes
+
+Select one or more images and press **P** (or **Shift+P** for 10 colors). Each image gets a strip of
+its dominant colors just below it, most common first, labeled with hex and perceptual value (L*)
+when big enough to read. Cropped images only use the visible part. Palettes are board items like
+images: move, resize, delete and export them, and the color picker (**I**) reads their swatches.
 
 ## Cropping
 

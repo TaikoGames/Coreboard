@@ -40,6 +40,19 @@ pub struct Item {
     /// own orientation (before rotation and flip). The file itself is never changed.
     #[serde(default = "full_crop")]
     pub crop: [f32; 4],
+    /// What this board element is. Older boards only had images.
+    #[serde(default)]
+    pub kind: Kind,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Kind {
+    /// An image from `images/`, named by `Item::file`.
+    #[default]
+    Image,
+    /// A strip of color swatches, most common first.
+    Palette { colors: Vec<[u8; 3]> },
 }
 
 fn full_crop() -> [f32; 4] {
@@ -60,11 +73,16 @@ impl Default for Item {
             guide: Guide::None,
             guide_orientation: 0,
             crop: full_crop(),
+            kind: Kind::Image,
         }
     }
 }
 
 impl Item {
+    pub fn is_image(&self) -> bool {
+        self.kind == Kind::Image
+    }
+
     /// Maps a normalized point in the source image to where it shows on screen, within the
     /// whole (uncropped) image's display rect.
     pub fn tex_to_display(&self, (u, v): (f32, f32)) -> (f32, f32) {

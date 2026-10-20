@@ -8,7 +8,7 @@ use eframe::egui::{
     StrokeKind, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
 
-use crate::board::{self, Analysis, Board, Guide, Item, Store, WatermarkPosition};
+use crate::board::{self, Analysis, Board, Guide, Item, Kind, Store, WatermarkPosition};
 use crate::export;
 use crate::filters::{self, Filter};
 
@@ -39,6 +39,8 @@ type Decoded = (
 /// Color picking reads from copies this size, which is plenty for a single pixel readout.
 const SAMPLE_SIDE: u32 = 1024;
 type Exported = Result<std::path::PathBuf, String>;
+/// (source image id, its dominant colors)
+type Extracted = (u64, Result<Vec<[u8; 3]>, String>);
 
 enum Drag {
     None,
@@ -84,6 +86,8 @@ pub struct CoreBoardApp {
     exporting: bool,
     exported_tx: Sender<Exported>,
     exported_rx: Receiver<Exported>,
+    palette_tx: Sender<Extracted>,
+    palette_rx: Receiver<Extracted>,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -91,6 +95,7 @@ impl CoreBoardApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, store: Store) -> Self {
         let (decoded_tx, decoded_rx) = channel();
         let (exported_tx, exported_rx) = channel();
+        let (palette_tx, palette_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty();
         Self {
@@ -114,6 +119,8 @@ impl CoreBoardApp {
             exporting: false,
             exported_tx,
             exported_rx,
+            palette_tx,
+            palette_rx,
             clipboard: arboard::Clipboard::new().ok(),
         }
     }
@@ -243,7 +250,7 @@ impl CoreBoardApp {
         }
         self.checkpoint();
         for item in &mut self.board.items {
-            if !self.selection.contains(&item.id) {
+            if !self.selection.contains(&item.id) || !item.is_image() {
                 continue;
             }
             // Rotation is applied before the flip, so mirrored images turn the other way.
@@ -269,8 +276,11 @@ impl CoreBoardApp {
             .board
             .items
             .iter_mut()
-            .filter(|i| selection.contains(&i.id))
+            .filter(|i| selection.contains(&i.id) && i.is_image())
             .collect();
+        if picked.is_empty() {
+            return;
+        }
         let all_on = picked.iter_mut().all(|i| *flag(i));
         for item in picked {
             *flag(item) = !all_on;
@@ -311,17 +321,18 @@ impl CoreBoardApp {
         self.toast("Golden spiral turned".into());
     }
 
+    /// The first selected image (study views and guides only apply to images).
     fn first_selected(&self) -> Option<&Item> {
         self.board
             .items
             .iter()
-            .find(|i| self.selection.contains(&i.id))
+            .find(|i| self.selection.contains(&i.id) && i.is_image())
     }
 
     fn set_on_selection(&mut self, f: impl Fn(&mut Item)) {
         self.checkpoint();
         for item in &mut self.board.items {
-            if self.selection.contains(&item.id) {
+            if self.selection.contains(&item.id) && item.is_image() {
                 f(item);
             }
         }
@@ -332,8 +343,17 @@ impl CoreBoardApp {
     fn sample_at(&self, canvas: Rect, pos: Pos2) -> Option<[u8; 3]> {
         let id = self.hit(canvas, pos)?;
         let item = self.board.items.iter().find(|i| i.id == id)?;
-        let sample = self.samples.get(&item.file)?;
         let rect = self.item_screen_rect(canvas, item);
+        match &item.kind {
+            Kind::Image => {}
+            Kind::Palette { colors } => {
+                return swatch_rects(rect, colors.len())
+                    .zip(colors)
+                    .find(|(r, _)| r.contains(pos))
+                    .map(|(_, &c)| c);
+            }
+        }
+        let sample = self.samples.get(&item.file)?;
         let s = (pos - rect.min) / rect.size();
         let [x0, y0, x1, y1] = item.display_crop();
         let (u, v) = item.display_to_tex((x0 + s.x * (x1 - x0), y0 + s.y * (y1 - y0)));
@@ -385,6 +405,78 @@ impl CoreBoardApp {
         painter.circle_stroke(pos, 5.0, Stroke::new(1.5, Color32::WHITE));
     }
 
+    // ---------------------------------------------------------------- palettes
+
+    /// Extracts the dominant colors of each selected image in the background; each palette
+    /// lands under its image when ready.
+    fn extract_palettes(&mut self, count: usize) {
+        let sources: Vec<(u64, std::path::PathBuf, [f32; 4])> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(&i.id) && i.is_image())
+            .map(|i| (i.id, self.store.image_path(&i.file), i.crop))
+            .collect();
+        if sources.is_empty() {
+            self.toast("Select images to extract colors from".into());
+            return;
+        }
+        for (id, path, crop) in sources {
+            let tx = self.palette_tx.clone();
+            std::thread::spawn(move || {
+                let result = image::open(&path).map_err(|e| e.to_string()).map(|img| {
+                    // Only the visible part of a cropped image counts.
+                    let (w, h) = (img.width() as f32, img.height() as f32);
+                    let [u0, v0, u1, v1] = crop;
+                    let x = (u0 * w) as u32;
+                    let y = (v0 * h) as u32;
+                    let cw = (((u1 - u0) * w) as u32).max(1);
+                    let ch = (((v1 - v0) * h) as u32).max(1);
+                    filters::palette(&img.crop_imm(x, y, cw, ch).to_rgba8(), count)
+                });
+                let _ = tx.send((id, result));
+            });
+        }
+        self.toast("Extracting colors…".into());
+    }
+
+    fn receive_palettes(&mut self) {
+        let mut first = true;
+        while let Ok((source, result)) = self.palette_rx.try_recv() {
+            let colors = match result {
+                Ok(colors) if !colors.is_empty() => colors,
+                Ok(_) => continue,
+                Err(err) => {
+                    self.toast(format!("Color extraction failed: {err}"));
+                    continue;
+                }
+            };
+            let Some(image) = self.board.items.iter().find(|i| i.id == source) else {
+                continue;
+            };
+            // A strip as wide as the image, one square swatch per color, just below it.
+            let swatch = image.size[0] / colors.len() as f32;
+            let pos = [image.pos[0], image.pos[1] + image.size[1] + swatch * 0.15];
+            let size = [image.size[0], swatch];
+            if first {
+                self.checkpoint();
+                self.selection.clear();
+                first = false;
+            }
+            let id = self.board.next_id;
+            self.board.next_id += 1;
+            self.board.items.push(Item {
+                id,
+                pos,
+                size,
+                kind: Kind::Palette { colors },
+                ..Item::default()
+            });
+            self.selection.insert(id);
+            self.touch();
+        }
+    }
+
     // ---------------------------------------------------------------- crop
 
     fn toggle_crop_mode(&mut self) {
@@ -392,11 +484,15 @@ impl CoreBoardApp {
             self.toast("Crop done".into());
             return;
         }
-        if self.selection.len() != 1 {
+        let id = self.selection.iter().next().copied();
+        let is_image = id
+            .and_then(|id| self.board.items.iter().find(|i| i.id == id))
+            .is_some_and(Item::is_image);
+        if self.selection.len() != 1 || !is_image {
             self.toast("Select one image to crop".into());
             return;
         }
-        self.crop_mode = self.selection.iter().next().copied();
+        self.crop_mode = id;
         self.toast("Drag over the image to crop · Enter/Esc when done · Shift+X resets".into());
     }
 
@@ -875,6 +971,7 @@ impl CoreBoardApp {
                     Key::V if !m.command => self.cycle_analysis(!m.shift),
                     Key::C if !m.command && m.shift => self.turn_spiral(),
                     Key::C if !m.command => self.cycle_guide(),
+                    Key::P if !m.command => self.extract_palettes(if m.shift { 10 } else { 6 }),
                     Key::X if !m.command && m.shift => self.reset_crop(canvas),
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
@@ -1098,6 +1195,13 @@ impl CoreBoardApp {
             if !rect.intersects(canvas) {
                 continue;
             }
+            if let Kind::Palette { colors } = &item.kind {
+                draw_palette(&painter, rect, colors, opacity);
+                if self.selection.contains(&item.id) {
+                    draw_selection(&painter, rect);
+                }
+                continue;
+            }
             if self.picker {
                 // The picker reads original colors, whatever view the image is shown in.
                 self.texture(&ctx, &item.file, Filter::Plain);
@@ -1155,20 +1259,7 @@ impl CoreBoardApp {
                 continue;
             }
             if self.selection.contains(&item.id) {
-                // Dark halo keeps the outline visible on images of any color.
-                painter.rect_stroke(
-                    rect.expand(2.0),
-                    CornerRadius::ZERO,
-                    Stroke::new(2.0, Color32::BLACK),
-                    StrokeKind::Outside,
-                );
-                painter.rect_stroke(
-                    rect,
-                    CornerRadius::ZERO,
-                    Stroke::new(2.0, ACCENT),
-                    StrokeKind::Outside,
-                );
-                painter.rect_filled(Self::handle_rect(rect), CornerRadius::same(2), ACCENT);
+                draw_selection(&painter, rect);
             }
         }
 
@@ -1214,7 +1305,7 @@ impl CoreBoardApp {
 
         // Status line.
         let status = format!(
-            "{:.0}%  ·  {} images{}{}{}",
+            "{:.0}%  ·  {} items{}{}{}",
             zoom * 100.0,
             self.board.items.len(),
             if opacity < 1.0 {
@@ -1261,6 +1352,7 @@ impl CoreBoardApp {
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
                         X / Shift+X            crop (drag) / reset crop\n\
+                        P / Shift+P            extract 6 / 10 color palette\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\
@@ -1318,6 +1410,7 @@ impl eframe::App for CoreBoardApp {
         self.paint(ui, canvas);
         self.export_dialog(&ctx);
         self.receive_exports();
+        self.receive_palettes();
 
         if !self.window_level_sent {
             let level = if self.board.window.always_on_top {
@@ -1340,6 +1433,70 @@ impl eframe::App for CoreBoardApp {
             } else {
                 ctx.request_repaint_after(wait);
             }
+        }
+    }
+}
+
+/// Accent outline with a dark halo (visible on any color) and the resize handle.
+fn draw_selection(painter: &egui::Painter, rect: Rect) {
+    painter.rect_stroke(
+        rect.expand(2.0),
+        CornerRadius::ZERO,
+        Stroke::new(2.0, Color32::BLACK),
+        StrokeKind::Outside,
+    );
+    painter.rect_stroke(
+        rect,
+        CornerRadius::ZERO,
+        Stroke::new(2.0, ACCENT),
+        StrokeKind::Outside,
+    );
+    painter.rect_filled(
+        CoreBoardApp::handle_rect(rect),
+        CornerRadius::same(2),
+        ACCENT,
+    );
+}
+
+/// Splits a palette's rect into equal swatches, along its longer side.
+fn swatch_rects(rect: Rect, n: usize) -> impl Iterator<Item = Rect> {
+    let horizontal = rect.width() >= rect.height();
+    let step = if horizontal {
+        vec2(rect.width() / n.max(1) as f32, 0.0)
+    } else {
+        vec2(0.0, rect.height() / n.max(1) as f32)
+    };
+    let size = if horizontal {
+        vec2(step.x, rect.height())
+    } else {
+        vec2(rect.width(), step.y)
+    };
+    (0..n).map(move |i| Rect::from_min_size(rect.min + step * i as f32, size))
+}
+
+/// Swatches with their hex and perceptual value, when there's room to read them.
+fn draw_palette(painter: &egui::Painter, rect: Rect, colors: &[[u8; 3]], opacity: f32) {
+    for (r, &[cr, cg, cb]) in swatch_rects(rect, colors.len()).zip(colors) {
+        painter.rect_filled(
+            r,
+            CornerRadius::ZERO,
+            Color32::from_rgb(cr, cg, cb).gamma_multiply(opacity),
+        );
+        let side = r.width().min(r.height());
+        if side >= 52.0 {
+            let l = filters::lightness(cr, cg, cb);
+            let ink = if l > 60.0 {
+                Color32::from_black_alpha(200)
+            } else {
+                Color32::from_white_alpha(230)
+            };
+            painter.text(
+                r.left_bottom() + vec2(6.0, -6.0),
+                Align2::LEFT_BOTTOM,
+                format!("#{cr:02X}{cg:02X}{cb:02X}\nL* {l:.0}"),
+                FontId::monospace((side * 0.13).clamp(9.0, 14.0)),
+                ink,
+            );
         }
     }
 }
