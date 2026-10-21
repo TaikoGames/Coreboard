@@ -2,6 +2,21 @@
 name = "coreboard"
 version = "0.1.0"
 edition = "2024"
+description = "A reference board for images: drop, arrange, study and export."
+authors = ["TaikoGames"]
+license = "Proprietary"
+
+[package.metadata.deb]
+name = "coreboard"
+maintainer = "TaikoGames"
+section = "graphics"
+extended-description = "Infinite-canvas image reference board with study tools (values, palettes, composition guides), notes, frames, tags and folder watching."
+depends = "$auto, libxkbcommon-x11-0"
+assets = [
+    ["target/release/coreboard", "usr/bin/", "755"],
+    ["packaging/coreboard.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/512x512/apps/coreboard.png", "644"],
+]
 
 [dependencies]
 ab_glyph = "0.2"
@@ -20,3 +35,6 @@ lto = "thin"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[build-dependencies]
+winresource = "0.1"

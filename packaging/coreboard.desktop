@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Core Board
+Comment=Reference board for images
+Exec=coreboard %f
+Icon=coreboard
+Terminal=false
+Categories=Graphics;2DGraphics;

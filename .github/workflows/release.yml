@@ -1,0 +1,162 @@
+# Builds ready-to-install Core Board downloads for Windows, macOS and Linux.
+#
+# - Run it by hand (Actions tab → "Build installers" → Run workflow) to get the files as
+#   downloadable artifacts of that run.
+# - Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to also publish them
+#   as a GitHub Release.
+
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          "value=$v" >> $env:GITHUB_OUTPUT
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.version.outputs.value }}" installer\coreboard.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path target\release\coreboard.exe -DestinationPath "dist\CoreBoard-${{ steps.version.outputs.value }}-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (Apple Silicon and Intel)
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: App bundle and disk image
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          APP="dmg/Core Board.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/coreboard \
+            target/x86_64-apple-darwin/release/coreboard \
+            -output "$APP/Contents/MacOS/coreboard"
+
+          ICONSET=AppIcon.iconset
+          mkdir -p "$ICONSET"
+          for size in 16 32 128 256 512; do
+            sips -z $size $size assets/icon.png --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+            double=$((size * 2))
+            if [ $double -le 512 ]; then
+              sips -z $double $double assets/icon.png --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+            fi
+          done
+          iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Core Board</string>
+            <key>CFBundleDisplayName</key><string>Core Board</string>
+            <key>CFBundleIdentifier</key><string>com.taikogames.coreboard</string>
+            <key>CFBundleExecutable</key><string>coreboard</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Ad-hoc signature so Apple Silicon will run it (no paid developer certificate).
+          codesign --force --deep --sign - "$APP"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Core Board" -srcfolder dmg -ov -format UDZO \
+            "dist/CoreBoard-${VERSION}-macos.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+
+  linux:
+    # The oldest supported Ubuntu, so the binary also runs on older distributions.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+      - name: Build
+        run: cargo build --release --locked
+      - name: Packages
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          mkdir -p dist
+          cargo deb --no-build --output "dist/coreboard_${VERSION}_amd64.deb"
+          DIR="CoreBoard-${VERSION}-linux"
+          mkdir -p "$DIR"
+          cp target/release/coreboard assets/icon.png packaging/coreboard.desktop "$DIR/"
+          tar -czf "dist/${DIR}.tar.gz" "$DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            ## Download
+
+            - **Windows:** `CoreBoard-Setup-….exe`. Double-click it, then **Install**. Core Board opens when it's done.
+              If Windows shows "Windows protected your PC", click **More info → Run anyway** (the installer isn't code-signed yet).
+              No-install option: the `windows-portable.zip`; unzip it and double-click `coreboard.exe`.
+            - **macOS:** `CoreBoard-….dmg`. Open it, drag **Core Board** onto **Applications**.
+              The first time, right-click the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**), since it isn't notarized yet.
+            - **Linux:** the `.deb` (Ubuntu/Debian: double-click, or `sudo apt install ./coreboard_….deb`), or the `.tar.gz` with a standalone binary.

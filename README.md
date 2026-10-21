@@ -3,12 +3,27 @@
 A small, fast reference board for images, written in Rust with [egui](https://github.com/emilk/egui).
 Drop images on an infinite canvas, arrange and resize them, and they're saved automatically.
 
-## Run
+## Install
 
-```sh
-cargo run --release              # reopens the board you used last
-cargo run --release -- ~/boards/moodboard   # open (or create) a board in any folder
-```
+Download the latest version from the **[Releases page](../../releases/latest)**:
+
+| You have | Download | Then |
+| --- | --- | --- |
+| **Windows** | `CoreBoard-Setup-….exe` | Double-click it, click **Install**. Core Board opens when it's done and is in the Start menu and on your desktop. |
+| Windows, no install | `…-windows-portable.zip` | Unzip, double-click `coreboard.exe`. |
+| **macOS** | `CoreBoard-….dmg` | Open it and drag **Core Board** onto **Applications**. |
+| **Linux** | `coreboard_…_amd64.deb` | Double-click (or `sudo apt install ./coreboard_…_amd64.deb`). |
+
+The first time you open it:
+
+- **Windows** may say *"Windows protected your PC"*: click **More info → Run anyway**. (The app isn't
+  code-signed yet; that needs a paid certificate.)
+- **macOS** may say it *"can't be opened"*: right-click the app → **Open**, or go to System Settings →
+  Privacy & Security → **Open Anyway**. (It isn't notarized by Apple yet.)
+
+Then drop some images on the window. Press **H** any time for the shortcuts.
+
+## Using boards
 
 Press **Ctrl+O** for the **Boards** window: create a board by name, open or create one in any folder
 (native folder picker), or jump back to a recent board. Switching saves the current board first.
@@ -197,6 +212,20 @@ use **Change…** in the dialog to pick another folder for this board (**Reset**
 Lower the opacity with **[** and press **T** to keep the board floating above other apps, e.g. to
 trace or match colors against reference while you work. Both settings are saved with the board.
 On Linux, see-through windows need a compositing desktop (GNOME, KDE and most others have one).
+
+## Building from source
+
+For development. You need [Rust](https://rustup.rs) (on Windows, also the Visual Studio Build Tools
+with "Desktop development with C++").
+
+```sh
+cargo run --release              # reopens the board you used last
+cargo run --release -- ~/boards/moodboard   # open (or create) a board in any folder
+```
+
+Installers are built by GitHub Actions (`.github/workflows/release.yml`): run **Build installers**
+from the Actions tab to get them as downloadable artifacts, or push a version tag (`v0.1.0`) to publish
+a release. The Windows installer script is `installer/coreboard.iss` (Inno Setup).
 
 ## Linux build notes
 
