@@ -36,6 +36,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Search | **Ctrl+F** fades everything but matches (tags, note text, frame titles); **Enter** selects them |
 | Lock / pin | **L** locks the selection in place; **Shift+L** pins it to the screen while you pan and zoom |
 | Snap / align | Moves snap to nearby edges and centers (hold **Alt** to move freely); **Alt+arrows**, **Alt+C/M** align, **Alt+H/V** space evenly |
+| Watch folder | **Ctrl+O** → Watch a folder: new images there appear on the board |
 | Radial menu | **Hold Q**, point at an option, release (find similar, web search, palette, study view, guide, crop, note) |
 | Boards | **Ctrl+O**: new, open folder, recent boards |
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
@@ -90,6 +91,21 @@ Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
   their left, center, right, top, middle or bottom edges, or spaces them evenly across or down
   (3+ items, keeping the outer ones in place). Shortcuts: **Alt+←/→/↑/↓**, **Alt+C** (center),
   **Alt+M** (middle), **Alt+H** / **Alt+V** (space evenly).
+
+## Watch a folder
+
+Point a board at a folder (your Unity or game screenshots, a Blender render output, a downloads
+folder) and new images saved there appear on the board by themselves. Open **Ctrl+O** and under
+**Watch a folder** choose the folder (or paste its path and press **Watch**).
+
+- New images land in a **Watching: <folder>** frame to the right of the board, in rows, scaled to
+  the same height; the frame grows as they arrive. Move or resize the frame like any other.
+- A file is only imported once it has stopped growing, so half-saved renders and screenshots are
+  left alone until they're done. Hidden files and non-images are ignored.
+- Images already in the folder when you start are skipped; **Add the N already there** brings
+  them in too.
+- Each arrival is one undo step. Watching is saved with the board and continues next time you
+  open it; **Stop watching** ends it. The folder is checked every 1.5 seconds while the app runs.
 
 ## Find more pictures
 

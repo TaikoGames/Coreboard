@@ -383,6 +383,23 @@ pub struct Board {
     /// Where PNG exports go; `None` means the board's own `exports/` folder.
     #[serde(default)]
     pub export_dir: Option<PathBuf>,
+    /// A folder whose new images are added to the board automatically.
+    #[serde(default)]
+    pub watch: Option<WatchFolder>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatchFolder {
+    pub path: PathBuf,
+    /// File names already handled: imported, or skipped as already there when watching began.
+    pub seen: Vec<String>,
+    /// Images that were in the folder when watching began, which can still be added on request.
+    pub skipped: Vec<String>,
+    /// The frame new images go into.
+    pub frame: Option<u64>,
+    /// Where the next image goes, relative to the frame's corner: `[x, y, row height]`.
+    pub cursor: [f32; 3],
 }
 
 pub struct Store {

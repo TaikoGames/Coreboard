@@ -18,6 +18,7 @@ use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
 mod organize;
+mod watch;
 use organize::Align;
 
 const MIN_ZOOM: f32 = 0.02;
@@ -204,6 +205,11 @@ pub struct CoreBoardApp {
     search_focus_pending: bool,
     /// Alignment guides (world space) shown while a move snaps.
     snap_lines: Vec<[Pos2; 2]>,
+    watch_polled: Instant,
+    /// Watched files waiting to finish writing: name -> (size, when first seen at that size).
+    watch_pending: HashMap<String, (u64, Instant)>,
+    watch_error: Option<String>,
+    watch_path_input: String,
     recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
 }
@@ -260,6 +266,10 @@ impl CoreBoardApp {
             search: None,
             search_focus_pending: false,
             snap_lines: Vec::new(),
+            watch_polled: Instant::now(),
+            watch_pending: HashMap::new(),
+            watch_error: None,
+            watch_path_input: String::new(),
             recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
         }
@@ -1812,6 +1822,8 @@ impl CoreBoardApp {
                         open = Some(dir.clone());
                     }
                 }
+                ui.separator();
+                self.watch_controls(ui);
                 ui.add_space(6.0);
                 close |= ui.button("Close").clicked();
             });
@@ -1849,6 +1861,8 @@ impl CoreBoardApp {
         self.crop_mode = None;
         self.radial = None;
         self.finder = None;
+        self.watch_pending.clear();
+        self.watch_error = None;
         self.dirty_since = None;
         self.show_help = self.board.items.is_empty();
         self.window_level_sent = false;
@@ -2575,6 +2589,7 @@ impl eframe::App for CoreBoardApp {
         self.receive_thumbs(&ctx);
         self.receive_exports();
         self.receive_palettes();
+        self.poll_watch(&ctx);
 
         if !self.window_level_sent {
             let level = if self.board.window.always_on_top {
