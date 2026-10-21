@@ -43,6 +43,16 @@ pub struct Item {
     /// What this board element is. Older boards only had images.
     #[serde(default)]
     pub kind: Kind,
+    /// Locked items can't be moved, resized or deleted until unlocked.
+    #[serde(default)]
+    pub locked: bool,
+    /// Pinned items stay put on screen while the board pans and zooms underneath:
+    /// `[x, y, width, height]` in screen points from the canvas corner.
+    #[serde(default)]
+    pub pinned: Option<[f32; 4]>,
+    /// Lowercase words for search, e.g. "forest", "armor".
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -98,6 +108,9 @@ impl Default for Item {
             guide_orientation: 0,
             crop: full_crop(),
             kind: Kind::Image,
+            locked: false,
+            pinned: None,
+            tags: Vec::new(),
         }
     }
 }
@@ -111,6 +124,38 @@ impl Item {
         matches!(self.kind, Kind::Frame { .. })
     }
 
+    /// Whether layout actions (move, align, arrange, rotate, crop) may change its geometry.
+    /// Pinned items only move by dragging, in screen space.
+    pub fn movable(&self) -> bool {
+        !self.locked && self.pinned.is_none()
+    }
+
+    /// Whether every word of `query` matches this item: a tag starting with the word, or the
+    /// word appearing in a note's text or a frame's title. Case-insensitive.
+    pub fn matches(&self, query: &str) -> bool {
+        let text = match &self.kind {
+            Kind::Note { text, .. } => text.to_lowercase(),
+            Kind::Frame { title } => title.to_lowercase(),
+            _ => String::new(),
+        };
+        query.split_whitespace().all(|word| {
+            let word = word.to_lowercase();
+            self.tags.iter().any(|t| t.starts_with(&word)) || text.contains(&word)
+        })
+    }
+}
+
+/// A tag as stored: trimmed, lowercase, inner spaces collapsed. `None` if nothing is left.
+pub fn normalize_tag(tag: &str) -> Option<String> {
+    let tag = tag
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    (!tag.is_empty()).then_some(tag)
+}
+
+impl Item {
     /// Maps a normalized point in the source image to where it shows on screen, within the
     /// whole (uncropped) image's display rect.
     pub fn tex_to_display(&self, (u, v): (f32, f32)) -> (f32, f32) {
@@ -479,6 +524,28 @@ mod tests {
         let mut item = item;
         item.crop = [0.0, 0.0, 0.25, 1.0];
         assert!(close(item.display_crop(), [0.0, 0.0, 1.0, 0.25]));
+    }
+
+    #[test]
+    fn search_matches_tag_prefixes_and_text() {
+        let image = Item {
+            tags: vec!["forest".into(), "dusk".into()],
+            ..Item::default()
+        };
+        assert!(image.matches("for"));
+        assert!(image.matches("Forest DUSK"));
+        assert!(!image.matches("forest armor"));
+        let note = Item {
+            kind: Kind::Note {
+                text: "Rim light from the left".into(),
+                color: 0,
+            },
+            ..Item::default()
+        };
+        assert!(note.matches("light"));
+        assert!(!note.matches("forest"));
+        assert_eq!(normalize_tag("  Old   Oak "), Some("old oak".into()));
+        assert_eq!(normalize_tag("   "), None);
     }
 
     #[test]

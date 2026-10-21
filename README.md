@@ -32,6 +32,10 @@ Boards created by name, and the first default board, live in your platform's dat
 | Grayscale | **B** (black & white, toggles) |
 | Window opacity | **[** / **]** (10% steps, down to 10%; the desktop shows through) |
 | Always on top | **T** (toggles) |
+| Tags | **Ctrl+T** tags the selection; tags show under hovered or selected items |
+| Search | **Ctrl+F** fades everything but matches (tags, note text, frame titles); **Enter** selects them |
+| Lock / pin | **L** locks the selection in place; **Shift+L** pins it to the screen while you pan and zoom |
+| Snap / align | Moves snap to nearby edges and centers (hold **Alt** to move freely); **Alt+arrows**, **Alt+C/M** align, **Alt+H/V** space evenly |
 | Radial menu | **Hold Q**, point at an option, release (find similar, web search, palette, study view, guide, crop, note) |
 | Boards | **Ctrl+O**: new, open folder, recent boards |
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
@@ -65,6 +69,27 @@ signatures.json  # cached value/palette signatures for Find more
 Images are copied in, so the board keeps working if the originals move. The board autosaves shortly
 after each change, and unreferenced images are cleaned up when you close the window.
 Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
+
+## Organizing
+
+- **Tags**: select items and press **Ctrl+T**. Type a tag and press **Enter** (repeat for more), or
+  click one already used on the board; click a tag's ✕ to remove it. Tags are lowercase and show
+  as chips under an item while it's hovered or selected. An image's tags also prefill the subject
+  in **Find more → Search the web**.
+- **Search**: **Ctrl+F** opens a search bar. Everything that doesn't match fades back. Matching uses
+  tags (by prefix: `for` finds `forest`), note text and frame titles; every word must match.
+  **Enter** selects the matches and zooms to them; **Esc** closes the bar.
+- **Lock** (**L**): locked items can't be moved, resized, rotated, cropped, arranged or deleted
+  (Delete skips them) until you press **L** again. A 🔒 badge marks them.
+- **Pin** (**Shift+L**): pinned items stay put on screen while the board pans and zooms under
+  them, like a reference you keep in the corner while you work. You can still drag and resize them.
+  📌 marks them; **Shift+L** again drops them back onto the board where they are.
+- **Snapping**: while you drag, the moved group's edges and center snap to the edges and centers of
+  nearby items, with magenta guides. Hold **Alt** to move freely.
+- **Align and space evenly**: with two or more items selected, a toolbar at the bottom aligns
+  their left, center, right, top, middle or bottom edges, or spaces them evenly across or down
+  (3+ items, keeping the outer ones in place). Shortcuts: **Alt+←/→/↑/↓**, **Alt+C** (center),
+  **Alt+M** (middle), **Alt+H** / **Alt+V** (space evenly).
 
 ## Find more pictures
 

@@ -17,6 +17,9 @@ use crate::export;
 use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
+mod organize;
+use organize::Align;
+
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 50.0;
 /// Textures larger than this on either side are downscaled; the original file is kept.
@@ -126,10 +129,11 @@ type Extracted = (u64, u64, Result<Vec<[u8; 3]>, String>);
 enum Drag {
     None,
     Pan,
-    /// `carried`: items inside a dragged frame, which move along with it.
+    /// `start`: where each moving (unpinned) item began; `total`: the unsnapped offset so far.
     Move {
         moved: bool,
-        carried: HashSet<u64>,
+        start: HashMap<u64, [f32; 2]>,
+        total: Vec2,
     },
     /// `aspect` is locked for images and palettes; notes and frames resize freely.
     Resize {
@@ -192,6 +196,14 @@ pub struct CoreBoardApp {
     thumbs: HashMap<std::path::PathBuf, Texture>,
     thumb_tx: Sender<Thumb>,
     thumb_rx: Receiver<Thumb>,
+    show_tags: bool,
+    tags_focus_pending: bool,
+    new_tag: String,
+    /// The search text while the search bar is open.
+    search: Option<String>,
+    search_focus_pending: bool,
+    /// Alignment guides (world space) shown while a move snaps.
+    snap_lines: Vec<[Pos2; 2]>,
     recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
 }
@@ -242,6 +254,12 @@ impl CoreBoardApp {
             thumbs: HashMap::new(),
             thumb_tx,
             thumb_rx,
+            show_tags: false,
+            tags_focus_pending: false,
+            new_tag: String::new(),
+            search: None,
+            search_focus_pending: false,
+            snap_lines: Vec::new(),
             recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
         }
@@ -260,6 +278,9 @@ impl CoreBoardApp {
     }
 
     fn item_screen_rect(&self, canvas: Rect, item: &Item) -> Rect {
+        if let Some([x, y, w, h]) = item.pinned {
+            return Rect::from_min_size(canvas.min + vec2(x, y), vec2(w, h));
+        }
         let min = self.to_screen(canvas, pos2(item.pos[0], item.pos[1]));
         Rect::from_min_size(min, vec2(item.size[0], item.size[1]) * self.board.view.zoom)
     }
@@ -347,12 +368,25 @@ impl CoreBoardApp {
     }
 
     fn delete_selection(&mut self) {
-        if self.selection.is_empty() {
+        let doomed = self
+            .board
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(&i.id) && !i.locked)
+            .count();
+        let kept = self.selection.len() - doomed;
+        if kept > 0 {
+            self.toast(format!("{kept} locked item(s) kept · unlock with L"));
+        }
+        if doomed == 0 {
             return;
         }
         self.checkpoint();
-        self.board.items.retain(|i| !self.selection.contains(&i.id));
-        self.selection.clear();
+        self.board
+            .items
+            .retain(|i| !self.selection.contains(&i.id) || i.locked);
+        self.selection
+            .retain(|id| self.board.items.iter().any(|i| i.id == *id));
         self.touch();
     }
 
@@ -372,7 +406,7 @@ impl CoreBoardApp {
         }
         self.checkpoint();
         for item in &mut self.board.items {
-            if !self.selection.contains(&item.id) || !item.is_image() {
+            if !self.selection.contains(&item.id) || !item.is_image() || !item.movable() {
                 continue;
             }
             // Rotation is applied before the flip, so mirrored images turn the other way.
@@ -614,7 +648,7 @@ impl CoreBoardApp {
         let id = self.selection.iter().next().copied();
         let is_image = id
             .and_then(|id| self.board.items.iter().find(|i| i.id == id))
-            .is_some_and(Item::is_image);
+            .is_some_and(|i| i.is_image() && i.movable());
         if self.selection.len() != 1 || !is_image {
             self.toast("Select one image to crop".into());
             return;
@@ -688,7 +722,8 @@ impl CoreBoardApp {
         let targets = self.targets();
         let mut picked: Vec<usize> = (0..self.board.items.len())
             .filter(|&i| {
-                targets.contains(&self.board.items[i].id) && !self.board.items[i].is_frame()
+                let item = &self.board.items[i];
+                targets.contains(&item.id) && !item.is_frame() && item.movable()
             })
             .collect();
         if picked.is_empty() {
@@ -754,11 +789,20 @@ impl CoreBoardApp {
     /// grabbed by their title bar, so their body stays free for box-selecting.
     fn hit(&self, canvas: Rect, pos: Pos2) -> Option<u64> {
         let items = &self.board.items;
+        // Pinned items float above the board.
+        let pinned = |i: &&Item| i.pinned.is_some();
         items
             .iter()
             .rev()
-            .filter(|i| !i.is_frame())
+            .filter(pinned)
             .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+            .or_else(|| {
+                items
+                    .iter()
+                    .rev()
+                    .filter(|i| !i.is_frame() && i.pinned.is_none())
+                    .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+            })
             .or_else(|| {
                 items
                     .iter()
@@ -777,9 +821,11 @@ impl CoreBoardApp {
 
     /// Items to draw, bottom to top: frames first, then everything else in stacking order.
     fn draw_order(&self) -> Vec<Item> {
-        let (frames, rest): (Vec<&Item>, Vec<&Item>) =
-            self.board.items.iter().partition(|i| i.is_frame());
-        frames.into_iter().chain(rest).cloned().collect()
+        let items = &self.board.items;
+        let frames = items.iter().filter(|i| i.is_frame() && i.pinned.is_none());
+        let rest = items.iter().filter(|i| !i.is_frame() && i.pinned.is_none());
+        let pinned = items.iter().filter(|i| i.pinned.is_some());
+        frames.chain(rest).chain(pinned).cloned().collect()
     }
 
     /// Unselected items lying fully inside a selected frame; they move with it.
@@ -796,7 +842,7 @@ impl CoreBoardApp {
         self.board
             .items
             .iter()
-            .filter(|i| !self.selection.contains(&i.id))
+            .filter(|i| !self.selection.contains(&i.id) && i.movable())
             .filter(|i| frames.iter().any(|f| f.contains_rect(world_rect(i))))
             .map(|i| i.id)
             .collect()
@@ -1020,7 +1066,7 @@ impl CoreBoardApp {
             .items
             .iter()
             .rev()
-            .filter(|i| self.selection.contains(&i.id))
+            .filter(|i| self.selection.contains(&i.id) && !i.locked)
             .find(|i| Self::handle_rect(self.item_screen_rect(canvas, i)).contains(pos))
             .map(|i| i.id)
     }
@@ -1395,6 +1441,7 @@ impl CoreBoardApp {
             return;
         };
         let (query, file) = (item.id, item.file.clone());
+        let item_tags = item.tags.clone();
         let world = Rect::from_min_size(
             pos2(item.pos[0], item.pos[1]),
             vec2(item.size[0], item.size[1]),
@@ -1414,6 +1461,7 @@ impl CoreBoardApp {
             })
             .map(|(_, t)| t.clone())
             .filter(|t| t != "Untitled")
+            .or_else(|| (!item_tags.is_empty()).then(|| item_tags.join(" ")))
             .or_else(|| self.finder.as_ref().map(|f| f.subject.clone()))
             .unwrap_or_default();
         self.finder = Some(Finder {
@@ -1888,6 +1936,19 @@ impl CoreBoardApp {
                     modifiers: m,
                     ..
                 } => match key {
+                    // Modified keys first, so they aren't caught by the plain-key arms below.
+                    Key::L if !m.command && m.shift => self.toggle_pin(canvas),
+                    Key::L if !m.command => self.toggle_lock(),
+                    Key::T if m.command => self.open_tags_window(),
+                    Key::F if m.command => self.open_search(),
+                    Key::ArrowLeft if m.alt => self.align_selection(Align::Left),
+                    Key::ArrowRight if m.alt => self.align_selection(Align::Right),
+                    Key::ArrowUp if m.alt => self.align_selection(Align::Top),
+                    Key::ArrowDown if m.alt => self.align_selection(Align::Bottom),
+                    Key::C if m.alt => self.align_selection(Align::CenterX),
+                    Key::M if m.alt => self.align_selection(Align::CenterY),
+                    Key::H if m.alt => self.distribute_selection(true),
+                    Key::V if m.alt => self.distribute_selection(false),
                     Key::Delete | Key::Backspace => self.delete_selection(),
                     Key::A if m.command => {
                         self.selection = self.board.items.iter().map(|i| i.id).collect();
@@ -2016,9 +2077,22 @@ impl CoreBoardApp {
                 }
                 self.checkpoint();
                 self.raise_selection();
+                // Everything that moves in world space: the movable selection plus what a
+                // dragged frame carries. Pinned items move in screen space; locked ones stay.
+                let carried = self.carried_by_selected_frames();
+                let start = self
+                    .board
+                    .items
+                    .iter()
+                    .filter(|i| {
+                        i.movable() && (self.selection.contains(&i.id) || carried.contains(&i.id))
+                    })
+                    .map(|i| (i.id, i.pos))
+                    .collect();
                 Drag::Move {
                     moved: false,
-                    carried: self.carried_by_selected_frames(),
+                    start,
+                    total: Vec2::ZERO,
                 }
             } else if modifiers.shift || modifiers.command {
                 Drag::Marquee {
@@ -2050,17 +2124,10 @@ impl CoreBoardApp {
                     self.touch();
                 }
             }
-            Drag::Move { moved, carried } => {
+            Drag::Move { moved, total, .. } => {
                 if delta != Vec2::ZERO {
                     *moved = true;
-                    let d = delta / zoom;
-                    for item in &mut self.board.items {
-                        if self.selection.contains(&item.id) || carried.contains(&item.id) {
-                            item.pos[0] += d.x;
-                            item.pos[1] += d.y;
-                        }
-                    }
-                    self.touch();
+                    *total += delta / zoom;
                 }
             }
             Drag::Resize { id, aspect } => {
@@ -2080,14 +2147,43 @@ impl CoreBoardApp {
                             (None, Kind::Note { .. }) => [w.max(80.0), item.size[1]],
                             (None, _) => [w.max(160.0), h.max(FRAME_TITLE_HEIGHT + 40.0)],
                         };
+                        if let Some(pin) = &mut item.pinned {
+                            pin[2] = item.size[0] * zoom;
+                            pin[3] = item.size[1] * zoom;
+                        }
                     }
                     self.touch();
                 }
             }
         }
 
+        // Moves snap their group's edges and centers to nearby items (hold Alt to move freely).
+        if let Drag::Move {
+            moved: true,
+            start,
+            total,
+        } = &self.drag
+            && delta != Vec2::ZERO
+        {
+            let (start, total) = (start.clone(), *total);
+            let snapped = self.snap_move(canvas, &start, total, !modifiers.alt);
+            for item in &mut self.board.items {
+                if let Some([x, y]) = start.get(&item.id) {
+                    item.pos = [x + snapped.x, y + snapped.y];
+                } else if self.selection.contains(&item.id)
+                    && !item.locked
+                    && let Some(pin) = &mut item.pinned
+                {
+                    pin[0] += delta.x;
+                    pin[1] += delta.y;
+                }
+            }
+            self.touch();
+        }
+
         // Finish the drag.
         if !pointer.any_down() {
+            self.snap_lines.clear();
             match std::mem::replace(&mut self.drag, Drag::None) {
                 Drag::Move { moved: false, .. } => {
                     // A plain click: drop the no-op history entry and collapse to one item.
@@ -2149,7 +2245,6 @@ impl CoreBoardApp {
         let painter = ui.painter_at(canvas);
         // Opacity fades the board itself; labels and overlays stay fully readable.
         let opacity = self.board.window.opacity;
-        let tint = Color32::WHITE.gamma_multiply(opacity);
         painter.rect_filled(canvas, CornerRadius::ZERO, BG.gamma_multiply(opacity));
 
         // Dot grid, skipped when it would be too dense to read.
@@ -2179,6 +2274,9 @@ impl CoreBoardApp {
         }
         let items = self.draw_order();
         let mut note_heights = Vec::new();
+        let hover = ctx.input(|i| i.pointer.hover_pos());
+        let mut tag_rows = Vec::new();
+        let mut badge_rows = Vec::new();
         for item in &items {
             let rect = self.item_screen_rect(canvas, item);
             if let Kind::Note { text, .. } = &item.kind {
@@ -2200,19 +2298,28 @@ impl CoreBoardApp {
             }
             let selected = self.selection.contains(&item.id);
             let editing = self.editing == Some(item.id);
+            let opacity = opacity * self.search_dim(item);
+            let tint = Color32::WHITE.gamma_multiply(opacity);
+            let handle = !item.locked;
+            if !item.tags.is_empty() && (selected || hover.is_some_and(|p| rect.contains(p))) {
+                tag_rows.push((rect, item.tags.clone()));
+            }
+            if item.locked || item.pinned.is_some() {
+                badge_rows.push((rect, item.clone()));
+            }
             match &item.kind {
                 Kind::Image => {}
                 Kind::Palette { colors } => {
                     draw_palette(&painter, rect, colors, opacity);
                     if selected {
-                        draw_selection(&painter, rect);
+                        draw_selection(&painter, rect, handle);
                     }
                     continue;
                 }
                 Kind::Note { text, color } => {
                     draw_note(&painter, rect, text, *color, zoom, opacity, editing);
                     if selected {
-                        draw_selection(&painter, rect);
+                        draw_selection(&painter, rect, handle);
                     }
                     continue;
                 }
@@ -2220,7 +2327,7 @@ impl CoreBoardApp {
                     let title_rect = self.frame_title_rect(canvas, item);
                     draw_frame(&painter, rect, title_rect, title, zoom, opacity, editing);
                     if selected {
-                        draw_selection(&painter, rect);
+                        draw_selection(&painter, rect, handle);
                     }
                     continue;
                 }
@@ -2282,9 +2389,17 @@ impl CoreBoardApp {
                 continue;
             }
             if self.selection.contains(&item.id) {
-                draw_selection(&painter, rect);
+                draw_selection(&painter, rect, handle);
             }
         }
+
+        for (rect, item) in badge_rows {
+            self.draw_badges(&painter, rect, &item);
+        }
+        for (rect, tags) in tag_rows {
+            self.draw_tags(&painter, rect, &tags);
+        }
+        self.paint_snap_lines(&painter, canvas);
 
         for (id, height) in note_heights {
             if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
@@ -2380,6 +2495,10 @@ impl CoreBoardApp {
                         Ctrl+E                 export PNG (+ watermark)\n\
                         Ctrl+O                 boards: new, open, recent\n\
                         Hold Q                 radial menu: find similar, web…\n\
+                        Ctrl+T / Ctrl+F        tags / search\n\
+                        L / Shift+L            lock / pin to screen\n\
+                        Alt+arrows, Alt+C/M    align (Alt+H/V: space evenly)\n\
+                        Alt while dragging     move without snapping\n\
                         V / Shift+V            value, saturation, noise, squint\n\
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
@@ -2432,6 +2551,7 @@ impl eframe::App for CoreBoardApp {
         self.receive_textures(&ctx);
 
         let canvas = ui.max_rect();
+        self.sync_pinned();
         // Claim the pointer so egui treats the whole window as one draggable surface.
         ui.interact(
             canvas,
@@ -2439,12 +2559,15 @@ impl eframe::App for CoreBoardApp {
             Sense::click_and_drag(),
         );
         // Dialogs are modal: the board ignores input while one is open.
-        if !self.show_export && !self.show_boards {
+        if !self.show_export && !self.show_boards && !self.show_tags {
             self.handle_input(ui, canvas);
         }
         self.paint(ui, canvas);
         self.edit_overlay(&ctx, canvas);
         self.finder_window(&ctx, canvas);
+        self.search_bar(&ctx, canvas);
+        self.tags_window(&ctx);
+        self.align_toolbar(&ctx, canvas);
         self.paint_radial(&ctx);
         self.export_dialog(&ctx);
         self.boards_window(&ctx);
@@ -2572,7 +2695,7 @@ fn draw_frame(
 }
 
 /// Accent outline with a dark halo (visible on any color) and the resize handle.
-fn draw_selection(painter: &egui::Painter, rect: Rect) {
+fn draw_selection(painter: &egui::Painter, rect: Rect, handle: bool) {
     painter.rect_stroke(
         rect.expand(2.0),
         CornerRadius::ZERO,
@@ -2585,11 +2708,13 @@ fn draw_selection(painter: &egui::Painter, rect: Rect) {
         Stroke::new(2.0, ACCENT),
         StrokeKind::Outside,
     );
-    painter.rect_filled(
-        CoreBoardApp::handle_rect(rect),
-        CornerRadius::same(2),
-        ACCENT,
-    );
+    if handle {
+        painter.rect_filled(
+            CoreBoardApp::handle_rect(rect),
+            CornerRadius::same(2),
+            ACCENT,
+        );
+    }
 }
 
 /// Splits a palette's rect into equal swatches, along its longer side.
