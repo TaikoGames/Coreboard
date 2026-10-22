@@ -386,6 +386,9 @@ pub struct Board {
     /// A folder whose new images are added to the board automatically.
     #[serde(default)]
     pub watch: Option<WatchFolder>,
+    /// Where "Publish to web" writes this board's web-ready copy; remembered per board.
+    #[serde(default)]
+    pub publish_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

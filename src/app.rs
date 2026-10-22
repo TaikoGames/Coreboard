@@ -16,6 +16,7 @@ use crate::boards;
 use crate::export;
 use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
+use crate::publish;
 
 mod organize;
 mod watch;
@@ -182,6 +183,10 @@ pub struct CoreBoardApp {
     exporting: bool,
     exported_tx: Sender<Exported>,
     exported_rx: Receiver<Exported>,
+    publishing: bool,
+    publish_status: Option<String>,
+    published_tx: Sender<Result<publish::Report, String>>,
+    published_rx: Receiver<Result<publish::Report, String>>,
     palette_tx: Sender<Extracted>,
     palette_rx: Receiver<Extracted>,
     /// Bumped on every board switch, so late background results for the old board are dropped.
@@ -218,6 +223,7 @@ impl CoreBoardApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, store: Store) -> Self {
         let (decoded_tx, decoded_rx) = channel();
         let (exported_tx, exported_rx) = channel();
+        let (published_tx, published_rx) = channel();
         let (palette_tx, palette_rx) = channel();
         let (find_tx, find_rx) = channel();
         let (thumb_tx, thumb_rx) = channel();
@@ -248,6 +254,10 @@ impl CoreBoardApp {
             exporting: false,
             exported_tx,
             exported_rx,
+            publishing: false,
+            publish_status: None,
+            published_tx,
+            published_rx,
             palette_tx,
             palette_rx,
             generation: 0,
@@ -1351,6 +1361,78 @@ impl CoreBoardApp {
         }
     }
 
+    // ---------------------------------------------------------------- publish to web
+
+    /// Saves the board, then writes a web-ready copy (board.json + shrunk images) into `dest`
+    /// on a background thread so a big board doesn't stall the UI.
+    fn start_publish(&mut self, dest: std::path::PathBuf) {
+        self.finish_edit();
+        let _ = self.store.save(&self.board);
+        let mut board = self.board.clone();
+        // Don't leak local filesystem paths into the published copy.
+        board.export_dir = None;
+        board.publish_dir = None;
+        board.watch = None;
+        let images_dir = self.store.dir.join("images");
+        let tx = self.published_tx.clone();
+        self.publishing = true;
+        self.publish_status = Some("Publishing…".to_string());
+        std::thread::spawn(move || {
+            let _ = tx.send(publish::publish(&board, &images_dir, &dest, 1600));
+        });
+    }
+
+    fn receive_publish(&mut self) {
+        if let Ok(result) = self.published_rx.try_recv() {
+            self.publishing = false;
+            self.publish_status = Some(match result {
+                Ok(report) => format!(
+                    "Published {} image{} to {}",
+                    report.images,
+                    if report.images == 1 { "" } else { "s" },
+                    report.dir.display()
+                ),
+                Err(err) => format!("Publish failed: {err}"),
+            });
+        }
+    }
+
+    fn publish_controls(&mut self, ui: &mut egui::Ui) {
+        ui.label("Publish to web");
+        ui.horizontal(|ui| {
+            let label = match &self.board.publish_dir {
+                Some(dir) => boards::display_name(dir),
+                None => "Choose folder…".to_string(),
+            };
+            if ui.button(label).clicked()
+                && let Some(dir) = rfd::FileDialog::new()
+                    .set_title("Folder to publish the web copy into")
+                    .pick_folder()
+            {
+                self.board.publish_dir = Some(dir);
+            }
+            let ready = self.board.publish_dir.is_some()
+                && !self.publishing
+                && !self.board.items.is_empty();
+            let label = if self.publishing { "Publishing…" } else { "Publish" };
+            if ui.add_enabled(ready, egui::Button::new(label)).clicked()
+                && let Some(dest) = self.board.publish_dir.clone()
+            {
+                self.start_publish(dest);
+            }
+        });
+        if let Some(status) = &self.publish_status {
+            ui.label(egui::RichText::new(status).small().weak());
+        }
+        ui.label(
+            egui::RichText::new(
+                "Writes board.json + web-sized images into that folder — e.g. your site's board/<name>/.",
+            )
+            .small()
+            .weak(),
+        );
+    }
+
     // ---------------------------------------------------------------- radial menu
 
     /// Opens the radial menu at `center`, selecting the image under it if it isn't already.
@@ -1824,6 +1906,8 @@ impl CoreBoardApp {
                 }
                 ui.separator();
                 self.watch_controls(ui);
+                ui.separator();
+                self.publish_controls(ui);
                 ui.add_space(6.0);
                 close |= ui.button("Close").clicked();
             });
@@ -2588,6 +2672,10 @@ impl eframe::App for CoreBoardApp {
         self.receive_finds();
         self.receive_thumbs(&ctx);
         self.receive_exports();
+        self.receive_publish();
+        if self.publishing {
+            ctx.request_repaint();
+        }
         self.receive_palettes();
         self.poll_watch(&ctx);
 
