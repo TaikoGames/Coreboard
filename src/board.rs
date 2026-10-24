@@ -72,6 +72,8 @@ pub enum Kind {
     },
     /// A titled section drawn behind everything; moving it carries what's inside.
     Frame { title: String },
+    /// An empty, labeled slot for an image still to find; dropping one on it fills it.
+    Placeholder { label: String },
 }
 
 /// Note backgrounds and their text colors.
@@ -88,6 +90,7 @@ pub const NOTE_FONT: f32 = 18.0;
 pub const NOTE_PAD: f32 = 12.0;
 pub const FRAME_TITLE_HEIGHT: f32 = 34.0;
 pub const FRAME_FONT: f32 = 19.0;
+pub const PLACEHOLDER_FONT: f32 = 18.0;
 
 fn full_crop() -> [f32; 4] {
     [0.0, 0.0, 1.0, 1.0]
@@ -136,6 +139,7 @@ impl Item {
         let text = match &self.kind {
             Kind::Note { text, .. } => text.to_lowercase(),
             Kind::Frame { title } => title.to_lowercase(),
+            Kind::Placeholder { label } => label.to_lowercase(),
             _ => String::new(),
         };
         query.split_whitespace().all(|word| {
@@ -196,6 +200,23 @@ impl Item {
 
     pub fn is_cropped(&self) -> bool {
         self.crop != full_crop()
+    }
+
+    /// Resizes the item to `target` (world units), cropping its visible part around the
+    /// center so the picture fills the new shape without stretching.
+    pub fn cover(&mut self, target: [f32; 2]) {
+        let current = self.size[0] / self.size[1].max(f32::EPSILON);
+        let wanted = target[0] / target[1].max(f32::EPSILON);
+        let [x0, y0, x1, y1] = self.display_crop();
+        let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let (mut w, mut h) = (x1 - x0, y1 - y0);
+        if current > wanted {
+            w *= wanted / current; // Too wide: trim the sides.
+        } else {
+            h *= current / wanted; // Too tall: trim top and bottom.
+        }
+        self.set_display_crop([cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0]);
+        self.size = target;
     }
 }
 
@@ -563,6 +584,35 @@ mod tests {
         assert!(!note.matches("forest"));
         assert_eq!(normalize_tag("  Old   Oak "), Some("old oak".into()));
         assert_eq!(normalize_tag("   "), None);
+    }
+
+    #[test]
+    fn cover_crops_to_the_slot_shape_around_the_center() {
+        // A 400x200 picture into a square slot keeps the middle half.
+        let mut wide = Item {
+            size: [400.0, 200.0],
+            ..Item::default()
+        };
+        wide.cover([300.0, 300.0]);
+        assert_eq!(wide.size, [300.0, 300.0]);
+        assert!(close(wide.crop, [0.25, 0.0, 0.75, 1.0]));
+
+        // A tall picture into a wide slot keeps a horizontal band.
+        let mut tall = Item {
+            size: [100.0, 400.0],
+            ..Item::default()
+        };
+        tall.cover([200.0, 100.0]);
+        assert!(close(tall.crop, [0.0, 0.4375, 1.0, 0.5625]));
+
+        // Rotated a quarter turn, the band is taken across the image's own width instead.
+        let mut turned = Item {
+            size: [400.0, 200.0],
+            rotation: 1,
+            ..Item::default()
+        };
+        turned.cover([200.0, 200.0]);
+        assert!(close(turned.crop, [0.0, 0.25, 1.0, 0.75]));
     }
 
     #[test]

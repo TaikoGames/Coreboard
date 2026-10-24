@@ -81,6 +81,10 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 draw_frame(&mut canvas, &font, (x, y, w, h), title, scale);
                 continue;
             }
+            Kind::Placeholder { label } => {
+                draw_placeholder(&mut canvas, &font, (x, y, w, h), label, scale);
+                continue;
+            }
         }
         let path = images_dir.join(&item.file);
         let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
@@ -218,6 +222,43 @@ fn draw_frame(
         [235, 235, 235],
         1.0,
     );
+}
+
+/// An empty slot: a dashed outline with its label in the middle.
+fn draw_placeholder(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    label: &str,
+    scale: f32,
+) {
+    blend_rect(canvas, (x, y, w, h), [255, 255, 255], 9.0 / 255.0);
+    let t = (1.5 * scale).round().max(1.0) as u32;
+    let (dash, gap) = (((8.0 * scale) as i64).max(2), ((6.0 * scale) as i64).max(2));
+    let ink = [140, 140, 140];
+    let mut along = 0;
+    while along < w as i64 {
+        let len = dash.min(w as i64 - along) as u32;
+        fill_rect(canvas, (x + along, y, len, t), ink);
+        fill_rect(canvas, (x + along, y + h as i64 - t as i64, len, t), ink);
+        along += dash + gap;
+    }
+    let mut along = 0;
+    while along < h as i64 {
+        let len = dash.min(h as i64 - along) as u32;
+        fill_rect(canvas, (x, y + along, t, len), ink);
+        fill_rect(canvas, (x + w as i64 - t as i64, y + along, t, len), ink);
+        along += dash + gap;
+    }
+    let text = if label.trim().is_empty() {
+        "Image to find"
+    } else {
+        label.trim()
+    };
+    let line = Line::layout(font, text, crate::board::PLACEHOLDER_FONT * scale);
+    let lx = x as f32 + (w as f32 - line.width) / 2.0;
+    let ly = y as f32 + (h as f32 - line.height) / 2.0;
+    line.draw(font, canvas, lx, ly, [210, 210, 210], 1.0);
 }
 
 /// Greedy word wrap into lines no wider than `max_width` (a single long word may overflow).

@@ -18,8 +18,10 @@ use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
 mod organize;
+mod slots;
 mod watch;
 use organize::Align;
+use slots::{draw_placeholder, placeholder_label_rect};
 
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 50.0;
@@ -518,7 +520,7 @@ impl CoreBoardApp {
                     .find(|(r, _)| r.contains(pos))
                     .map(|(_, &c)| c);
             }
-            Kind::Note { .. } | Kind::Frame { .. } => return None,
+            Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. } => return None,
         }
         let sample = self.samples.get(&item.file)?;
         let s = (pos - rect.min) / rect.size();
@@ -939,7 +941,10 @@ impl CoreBoardApp {
         let Some(item) = self.board.items.iter().find(|i| i.id == id) else {
             return;
         };
-        if !matches!(item.kind, Kind::Note { .. } | Kind::Frame { .. }) {
+        if !matches!(
+            item.kind,
+            Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. }
+        ) {
             return;
         }
         self.edit_original = if created {
@@ -997,6 +1002,7 @@ impl CoreBoardApp {
         let item = &self.board.items[index];
         let rect = self.item_screen_rect(canvas, item);
         let title = self.frame_title_rect(canvas, item);
+        let mut centered = false;
         let (area, font, ink, multiline) = match &item.kind {
             Kind::Note { color, .. } => {
                 let [r, g, b] = NOTE_COLORS[*color as usize % NOTE_COLORS.len()].1;
@@ -1012,6 +1018,15 @@ impl CoreBoardApp {
                 let inset = vec2(10.0 * zoom, ((title.height() - font * 1.25) / 2.0).max(0.0));
                 (title.shrink2(inset), font, Color32::from_gray(235), false)
             }
+            Kind::Placeholder { .. } => {
+                centered = true;
+                (
+                    placeholder_label_rect(rect, zoom),
+                    board::PLACEHOLDER_FONT * zoom,
+                    Color32::from_gray(225),
+                    false,
+                )
+            }
             _ => {
                 self.editing = None;
                 return;
@@ -1025,6 +1040,7 @@ impl CoreBoardApp {
         let text = match &mut item.kind {
             Kind::Note { text, .. } => text,
             Kind::Frame { title } => title,
+            Kind::Placeholder { label } => label,
             _ => return,
         };
         egui::Area::new(egui::Id::unique("coreboard-text-editor"))
@@ -1035,6 +1051,12 @@ impl CoreBoardApp {
                     egui::TextEdit::multiline(text)
                 } else {
                     egui::TextEdit::singleline(text)
+                };
+                let edit = if centered {
+                    edit.align(Align2::CENTER_TOP)
+                        .hint_text("Name this slot, e.g. Front view")
+                } else {
+                    edit
                 };
                 let response = ui.add(
                     edit.font(FontId::proportional(font.max(4.0)))
@@ -1084,7 +1106,16 @@ impl CoreBoardApp {
     // ---------------------------------------------------------------- import
 
     /// Adds images to the board, cascading them from `at` (screen space).
-    fn import_all(&mut self, canvas: Rect, at: Pos2, sources: Vec<(Vec<u8>, Option<&Path>)>) {
+    fn import_all(&mut self, canvas: Rect, at: Pos2, mut sources: Vec<(Vec<u8>, Option<&Path>)>) {
+        // Dropped or pasted onto an empty slot: the first image fills it.
+        if !sources.is_empty()
+            && let Some(slot) = self.slot_at(canvas, at)
+        {
+            let (bytes, path) = sources.remove(0);
+            if !self.fill_slot_with_bytes(slot, &bytes, path) {
+                self.toast("That file isn't an image I can read".into());
+            }
+        }
         let mut added = 0;
         let mut failed = 0;
         let mut cursor = self.to_world(canvas, at);
@@ -1140,6 +1171,17 @@ impl CoreBoardApp {
     }
 
     fn paste(&mut self, canvas: Rect, at: Pos2, pasted_text: Option<String>) {
+        // With one empty slot selected, pasting fills it wherever the pointer is.
+        let at = match self.selection.iter().collect::<Vec<_>>().as_slice() {
+            [id] => self
+                .board
+                .items
+                .iter()
+                .find(|i| i.id == **id && matches!(i.kind, Kind::Placeholder { .. }))
+                .map(|i| self.item_screen_rect(canvas, i).center())
+                .unwrap_or(at),
+            _ => at,
+        };
         if let Some(clipboard) = &mut self.clipboard
             && let Ok(img) = clipboard.get_image()
         {
@@ -1985,6 +2027,7 @@ impl CoreBoardApp {
                     Key::C if !m.command && m.shift => self.turn_spiral(),
                     Key::C if !m.command => self.cycle_guide(),
                     Key::P if !m.command => self.extract_palettes(if m.shift { 10 } else { 6 }),
+                    Key::E if !m.command && !m.shift => self.add_placeholder(canvas, anchor),
                     Key::N if !m.command && m.shift => self.cycle_note_color(),
                     Key::N if !m.command => self.add_note(canvas, anchor),
                     Key::G if m.command => self.add_frame(canvas, anchor),
@@ -2076,7 +2119,7 @@ impl CoreBoardApp {
                 let item = self.board.items.iter().find(|i| i.id == id).unwrap();
                 let aspect = match item.kind {
                     Kind::Image | Kind::Palette { .. } => Some(item.size[0] / item.size[1]),
-                    Kind::Note { .. } | Kind::Frame { .. } => None,
+                    Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. } => None,
                 };
                 self.checkpoint();
                 Drag::Resize { id, aspect }
@@ -2198,6 +2241,12 @@ impl CoreBoardApp {
         // Finish the drag.
         if !pointer.any_down() {
             self.snap_lines.clear();
+            // Releasing a dragged image over an empty slot puts it in the slot.
+            if let Some(slot) = self.slot_drop_target(&ctx, canvas)
+                && let Some(image) = self.single_selected_image()
+            {
+                self.fill_slot_with_item(slot, image);
+            }
             match std::mem::replace(&mut self.drag, Drag::None) {
                 Drag::Move { moved: false, .. } => {
                     // A plain click: drop the no-op history entry and collapse to one item.
@@ -2287,6 +2336,7 @@ impl CoreBoardApp {
             self.crop_mode = None;
         }
         let items = self.draw_order();
+        let drop_target = self.slot_drop_target(&ctx, canvas);
         let mut note_heights = Vec::new();
         let hover = ctx.input(|i| i.pointer.hover_pos());
         let mut tag_rows = Vec::new();
@@ -2340,6 +2390,14 @@ impl CoreBoardApp {
                 Kind::Frame { title } => {
                     let title_rect = self.frame_title_rect(canvas, item);
                     draw_frame(&painter, rect, title_rect, title, zoom, opacity, editing);
+                    if selected {
+                        draw_selection(&painter, rect, handle);
+                    }
+                    continue;
+                }
+                Kind::Placeholder { label } => {
+                    let highlight = drop_target == Some(item.id);
+                    draw_placeholder(&painter, rect, label, zoom, opacity, highlight, editing);
                     if selected {
                         draw_selection(&painter, rect, handle);
                     }
@@ -2414,6 +2472,31 @@ impl CoreBoardApp {
             self.draw_tags(&painter, rect, &tags);
         }
         self.paint_snap_lines(&painter, canvas);
+        // The slot under a dragged image is hidden by it, so mark it on top of everything.
+        if let Some(slot) = drop_target.and_then(|id| self.board.items.iter().find(|i| i.id == id))
+        {
+            let rect = self.item_screen_rect(canvas, slot);
+            painter.rect_stroke(
+                rect.expand(3.0),
+                CornerRadius::same(6),
+                Stroke::new(3.0, ACCENT),
+                StrokeKind::Outside,
+            );
+            let label = match &slot.kind {
+                Kind::Placeholder { label } if !label.trim().is_empty() => {
+                    format!("Drop to fill “{}”", label.trim())
+                }
+                _ => "Drop to fill this slot".to_string(),
+            };
+            let galley = painter.layout_no_wrap(label, FontId::proportional(13.0), Color32::WHITE);
+            let pos = rect.center_top() - vec2(galley.size().x / 2.0, galley.size().y + 12.0);
+            painter.rect_filled(
+                Rect::from_min_size(pos, galley.size()).expand(5.0),
+                CornerRadius::same(5),
+                ACCENT,
+            );
+            painter.galley(pos, galley, Color32::WHITE);
+        }
 
         for (id, height) in note_heights {
             if let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) {
@@ -2520,7 +2603,8 @@ impl CoreBoardApp {
                         P / Shift+P            extract 6 / 10 color palette\n\
                         N / Shift+N            new note / note color\n\
                         Ctrl+G                 frame around selection\n\
-                        Double-click           edit note or frame title\n\
+                        E                      empty image slot (drop/paste fills)\n\
+                        Double-click           edit note, frame or slot label\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         F                      fit to view\n\

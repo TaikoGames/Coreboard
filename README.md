@@ -59,6 +59,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
 | Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
 | Note | **N** adds a note at the cursor and starts typing; **Shift+N** changes its color |
+| Image slot | **E** adds an empty, labeled slot; drop, paste or drag an image onto it to fill it |
 | Frame | **Ctrl+G** wraps the selection in a titled frame (nothing selected: an empty one) |
 | Edit text | **Double-click** a note, or a frame's title bar |
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
@@ -153,6 +154,24 @@ need a large AI model), which is why web searches use the words you type.
   to rename. To select a frame by box, box it in completely.
 
 Both are undoable and included in PNG exports.
+
+## Image slots
+
+Plan a board before you have the pictures. Press **E** to drop an empty **slot** at the cursor and type
+what belongs there, e.g. *Front view*, *Color ref*, *Lighting* (**Enter** when done; double-click to
+rename later). Slots show a picture icon and their label, so it's easy to see what's still missing.
+
+Fill a slot by:
+
+- **dropping** an image file onto it,
+- **selecting** it and pasting (**Ctrl+V**), or
+- **dragging** an image that's already on the board onto it (the slot lights up with
+  *Drop to fill "…"*).
+
+The image takes the slot's place and exact size, center-cropped to fit (adjust with **X**, it's the
+usual non-destructive crop), and the slot's label is kept as a tag, so it's still easy to identify and
+search. Undo puts the empty slot back. Resize slots freely with the corner handle; empty slots show as
+labeled dashed boxes in exports.
 
 ## Color palettes
 
