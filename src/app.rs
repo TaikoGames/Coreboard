@@ -1928,7 +1928,8 @@ impl CoreBoardApp {
         self.new_board_name.clear();
         boards::remember(&self.store.dir);
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "Core Board — {}",
+            "Core Board {} — {}",
+            env!("CARGO_PKG_VERSION"),
             self.store.dir.display()
         )));
         self.toast(format!("Opened {}", boards::display_name(&self.store.dir)));
@@ -2672,11 +2673,9 @@ impl CoreBoardApp {
                         F                      fit to view\n\
                         1                      zoom 100%\n\
                         H                      toggle this help";
-            let galley = painter.layout_no_wrap(
-                help.into(),
-                FontId::monospace(12.0),
-                Color32::from_gray(200),
-            );
+            let help = format!("Core Board {}\n\n{help}", env!("CARGO_PKG_VERSION"));
+            let galley =
+                painter.layout_no_wrap(help, FontId::monospace(12.0), Color32::from_gray(200));
             let pos = canvas.right_top() + vec2(-galley.size().x - 18.0, 12.0);
             let bg = Rect::from_min_size(pos, galley.size()).expand(8.0);
             painter.rect_filled(bg, CornerRadius::same(6), Color32::from_black_alpha(180));

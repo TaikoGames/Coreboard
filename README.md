@@ -5,7 +5,10 @@ Drop images on an infinite canvas, arrange and resize them, and they're saved au
 
 ## Install
 
-Download the latest version from the **[Releases page](../../releases/latest)**:
+Download the latest version from the **[Releases page](../../releases/latest)**. Every version stays
+listed on **[all releases](../../releases)** with its own downloads and a list of what changed, so you
+can always go back to an older one. The app shows its version in the window title and the help (**H**).
+
 
 | You have | Download | Then |
 | --- | --- | --- |

@@ -29,7 +29,11 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(format!("Core Board — {}", dir.display()))
+            .with_title(format!(
+                "Core Board {} — {}",
+                env!("CARGO_PKG_VERSION"),
+                dir.display()
+            ))
             .with_inner_size([1280.0, 800.0])
             .with_drag_and_drop(true)
             .with_icon(
