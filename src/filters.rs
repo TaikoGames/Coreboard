@@ -243,6 +243,21 @@ pub fn weighted_palette(img: &RgbaImage, k: usize) -> Vec<([u8; 3], f32)> {
         .collect()
 }
 
+/// A color as the gray of the same perceptual value, optionally snapped to `bands` tones like
+/// the value-band study views. Used to show whole palettes in values.
+pub fn value_gray([r, g, b]: [u8; 3], bands: Option<u32>) -> [u8; 3] {
+    let l = lightness(r, g, b);
+    let l = match bands {
+        Some(n) if n > 1 => {
+            let band = ((l / 100.0 * n as f32) as u32).min(n - 1);
+            8.0 + 87.0 * band as f32 / (n - 1) as f32
+        }
+        _ => l,
+    };
+    let v = linear_to_srgb(lightness_to_y(l));
+    [v, v, v]
+}
+
 // ---------------------------------------------------------------- color math
 
 /// HSV as a painter's color picker shows it: hue 0..360, saturation and value 0..1.
@@ -364,6 +379,20 @@ mod tests {
     fn palette_stops_at_the_number_of_distinct_colors() {
         let img = RgbaImage::from_pixel(20, 20, Rgba([10, 200, 90, 255]));
         assert_eq!(palette(&img, 6), vec![[10, 200, 90]]);
+    }
+
+    #[test]
+    fn value_gray_keeps_lightness() {
+        // A saturated blue and its value gray have the same perceptual lightness.
+        let blue = [40, 60, 200];
+        let [g, _, _] = value_gray(blue, None);
+        assert!((lightness(g, g, g) - lightness(40, 60, 200)).abs() < 1.0);
+        // In 3 bands everything lands on one of three tones.
+        let tones: std::collections::BTreeSet<u8> = (0..=255u8)
+            .step_by(5)
+            .map(|v| value_gray([v, v, v], Some(3))[0])
+            .collect();
+        assert_eq!(tones.len(), 3);
     }
 
     #[test]

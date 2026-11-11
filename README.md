@@ -66,6 +66,9 @@ Boards created by name, and the first default board, live in your platform's dat
 | Frame | **Ctrl+G** wraps the selection in a titled frame (nothing selected: an empty one) |
 | Edit text | **Double-click** a note, or a frame's title bar |
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
+| Duplicate | **Ctrl+D** copies the selection right beside it |
+| Caption | **Double-click** an image to write a caption under it |
+| Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
@@ -183,6 +186,17 @@ Select one or more images and press **P** (or **Shift+P** for 10 colors). Each i
 its dominant colors just below it, most common first, labeled with hex and perceptual value (L*)
 when big enough to read. Cropped images only use the visible part. Palettes are board items like
 images: move, resize, delete and export them, and the color picker (**I**) reads their swatches.
+
+## Captions, duplicates and whole-board values
+
+- **Captions**: double-click an image and type a short caption, e.g. *Sargent, 1885, rim light*
+  (**Enter** when done). It sits under the image, moves with it, shows up in search and in PNG
+  exports. Double-click again to change it; clear the text to remove it.
+- **Duplicate** (**Ctrl+D**): copies the selected items right beside them, to try a different crop,
+  study view or set of drawings side by side.
+- **Whole-board value check** (**Shift+B**): shows every image and palette on the board in grayscale,
+  press again for 3 tones (notan), and again to go back to color. It's a view only: nothing on the
+  board changes, and exports stay in color.
 
 ## Drawing on images
 

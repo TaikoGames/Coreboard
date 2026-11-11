@@ -57,6 +57,9 @@ pub struct Item {
     /// crop along with it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<Mark>,
+    /// A short line of text shown under an image, e.g. "Sargent, 1885, rim light".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +186,10 @@ pub const NOTE_PAD: f32 = 12.0;
 pub const FRAME_TITLE_HEIGHT: f32 = 34.0;
 pub const FRAME_FONT: f32 = 19.0;
 pub const PLACEHOLDER_FONT: f32 = 18.0;
+/// Captions under images: font size, gap below the image and line spacing, in world units.
+pub const CAPTION_FONT: f32 = 15.0;
+pub const CAPTION_GAP: f32 = 8.0;
+pub const CAPTION_LINE: f32 = CAPTION_FONT * 1.3;
 
 fn full_crop() -> [f32; 4] {
     [0.0, 0.0, 1.0, 1.0]
@@ -207,6 +214,7 @@ impl Default for Item {
             pinned: None,
             tags: Vec::new(),
             marks: Vec::new(),
+            caption: String::new(),
         }
     }
 }
@@ -233,7 +241,7 @@ impl Item {
             Kind::Note { text, .. } => text.to_lowercase(),
             Kind::Frame { title } => title.to_lowercase(),
             Kind::Placeholder { label } => label.to_lowercase(),
-            _ => String::new(),
+            _ => self.caption.to_lowercase(),
         };
         query.split_whitespace().all(|word| {
             let word = word.to_lowercase();

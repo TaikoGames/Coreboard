@@ -11,8 +11,8 @@ use image::imageops::{self, FilterType};
 use image::{DynamicImage, Rgba, RgbaImage};
 
 use crate::board::{
-    FRAME_FONT, FRAME_TITLE_HEIGHT, Item, Kind, MARK_COLORS, MARK_WIDTH, Mark, NOTE_COLORS,
-    NOTE_FONT, NOTE_PAD, Watermark, WatermarkPosition,
+    CAPTION_FONT, CAPTION_GAP, CAPTION_LINE, FRAME_FONT, FRAME_TITLE_HEIGHT, Item, Kind,
+    MARK_COLORS, MARK_WIDTH, Mark, NOTE_COLORS, NOTE_FONT, NOTE_PAD, Watermark, WatermarkPosition,
 };
 use crate::filters::{self, Filter};
 
@@ -39,14 +39,30 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
     if items.is_empty() {
         return Err("nothing to export".into());
     }
+    let font =
+        FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).expect("bundled font is valid");
+    // Captions hang below their images, so they count toward the picture's size.
+    let caption_lines = |i: &Item| -> Vec<String> {
+        if i.is_image() && !i.caption.trim().is_empty() {
+            wrap(&font, i.caption.trim(), CAPTION_FONT, i.size[0])
+        } else {
+            Vec::new()
+        }
+    };
     let (min, max) = items
         .iter()
         .fold(([f32::MAX; 2], [f32::MIN; 2]), |(min, max), i| {
+            let lines = caption_lines(i).len();
+            let below = if lines > 0 {
+                CAPTION_GAP + lines as f32 * CAPTION_LINE
+            } else {
+                0.0
+            };
             (
                 [min[0].min(i.pos[0]), min[1].min(i.pos[1])],
                 [
                     max[0].max(i.pos[0] + i.size[0]),
-                    max[1].max(i.pos[1] + i.size[1]),
+                    max[1].max(i.pos[1] + i.size[1] + below),
                 ],
             )
         });
@@ -57,8 +73,6 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
     let height = ((content[1] + 2.0 * PADDING) * scale).round().max(1.0) as u32;
     let mut canvas = RgbaImage::from_pixel(width, height, BACKGROUND);
 
-    let font =
-        FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT).expect("bundled font is valid");
     // Frames sit behind everything, as on the board.
     let mut ordered: Vec<&Item> = items.iter().collect();
     ordered.sort_by_key(|i| !i.is_frame());
@@ -110,6 +124,12 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
         imageops::overlay(&mut canvas, &img, x, y);
         let marks: Vec<Mark> = item.marks.iter().map(|m| item.local_mark(m)).collect();
         draw_marks(&mut canvas, (x, y, w, h), &marks, scale);
+        let top = (y + h as i64) as f32 + CAPTION_GAP * scale;
+        for (n, line) in caption_lines(item).iter().enumerate() {
+            let line = Line::layout(&font, line, CAPTION_FONT * scale);
+            let ly = top + n as f32 * CAPTION_LINE * scale;
+            line.draw(&font, &mut canvas, x as f32, ly, [205, 205, 205], 1.0);
+        }
     }
 
     let text = watermark.text.trim();

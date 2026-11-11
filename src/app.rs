@@ -182,10 +182,12 @@ pub struct CoreBoardApp {
     draw_tool: board::MarkShape,
     draw_color: u8,
     show_marks: bool,
+    /// Whole-board value check: 0 off, 1 grayscale, 2 three-tone notan.
+    board_values: u8,
     /// The note or frame whose text is being edited.
     editing: Option<u64>,
     /// Its contents before editing (None for a just-created item), to skip no-op undo steps.
-    edit_original: Option<Kind>,
+    edit_original: Option<Item>,
     edit_focus_pending: bool,
     /// Screen area of the text editor, where the board ignores presses.
     edit_rect: Option<Rect>,
@@ -256,6 +258,7 @@ impl CoreBoardApp {
             draw_tool: board::MarkShape::Arrow,
             draw_color: 0,
             show_marks: true,
+            board_values: 0,
             editing: None,
             edit_original: None,
             edit_focus_pending: false,
@@ -588,6 +591,75 @@ impl CoreBoardApp {
         // Small ring marking the exact pixel.
         painter.circle_stroke(pos, 5.0, Stroke::new(3.0, Color32::BLACK));
         painter.circle_stroke(pos, 5.0, Stroke::new(1.5, Color32::WHITE));
+    }
+
+    // ---------------------------------------------------------------- duplicate and values
+
+    /// Copies the selection and puts the copies right beside it, selected.
+    fn duplicate_selection(&mut self) {
+        let picked: Vec<Item> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(&i.id))
+            .cloned()
+            .collect();
+        let Some(bounds) = picked
+            .iter()
+            .map(|i| Rect::from_min_size(pos2(i.pos[0], i.pos[1]), vec2(i.size[0], i.size[1])))
+            .reduce(|a, b| a.union(b))
+        else {
+            return;
+        };
+        let shift = bounds.width() + 24.0;
+        let zoom = self.board.view.zoom;
+        self.checkpoint();
+        self.selection.clear();
+        for mut item in picked {
+            item.id = self.board.next_id;
+            self.board.next_id += 1;
+            item.pos[0] += shift;
+            if let Some(pin) = &mut item.pinned {
+                pin[0] += shift * zoom;
+            }
+            self.selection.insert(item.id);
+            self.board.items.push(item);
+        }
+        let n = self.selection.len();
+        self.toast(if n == 1 {
+            "Duplicated".into()
+        } else {
+            format!("Duplicated {n} items")
+        });
+        self.touch();
+    }
+
+    /// Off → whole board in grayscale → in 3 tones → off. A view only: nothing is changed.
+    fn cycle_board_values(&mut self) {
+        self.board_values = (self.board_values + 1) % 3;
+        self.toast(
+            match self.board_values {
+                1 => "Values: whole board in grayscale",
+                2 => "Values: whole board in 3 tones",
+                _ => "Back to color",
+            }
+            .into(),
+        );
+    }
+
+    /// A palette's colors as the current view shows them.
+    fn view_palette(&self, colors: &[[u8; 3]]) -> Vec<[u8; 3]> {
+        match self.board_values {
+            1 => colors
+                .iter()
+                .map(|c| filters::value_gray(*c, None))
+                .collect(),
+            2 => colors
+                .iter()
+                .map(|c| filters::value_gray(*c, Some(3)))
+                .collect(),
+            _ => colors.to_vec(),
+        }
     }
 
     // ---------------------------------------------------------------- palettes
@@ -950,25 +1022,22 @@ impl CoreBoardApp {
         self.touch();
     }
 
-    /// Starts editing a note's text or a frame's title. `created` means the item was just
-    /// added, so its creation is already on the undo stack.
+    /// Starts editing a note's text, a frame's title, a slot's label or an image's caption.
+    /// `created` means the item was just added, so its creation is already on the undo stack.
     fn begin_edit(&mut self, id: u64, created: bool) {
         self.finish_edit();
         let Some(item) = self.board.items.iter().find(|i| i.id == id) else {
             return;
         };
-        if !matches!(
-            item.kind,
-            Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. }
-        ) {
+        if matches!(item.kind, Kind::Palette { .. }) {
             return;
         }
         self.edit_original = if created {
             None
         } else {
-            let kind = item.kind.clone();
+            let original = item.clone();
             self.checkpoint();
-            Some(kind)
+            Some(original)
         };
         self.editing = Some(id);
         self.edit_focus_pending = true;
@@ -993,7 +1062,7 @@ impl CoreBoardApp {
                 self.selection.remove(&id);
             }
             None => {}
-            Some(kind) if kind == item.kind => {
+            Some(original) if original == *item => {
                 self.undo.pop();
             }
             // Clearing a note's text deletes it (undo brings it back).
@@ -1043,6 +1112,19 @@ impl CoreBoardApp {
                     false,
                 )
             }
+            Kind::Image => {
+                // Keep the caption editor readable even when zoomed far out.
+                let font = (board::CAPTION_FONT * zoom).max(12.0);
+                (
+                    Rect::from_min_size(
+                        pos2(rect.min.x, rect.max.y + board::CAPTION_GAP * zoom),
+                        vec2(rect.width().max(160.0), font * 1.35),
+                    ),
+                    font,
+                    Color32::from_gray(225),
+                    false,
+                )
+            }
             _ => {
                 self.editing = None;
                 return;
@@ -1053,10 +1135,12 @@ impl CoreBoardApp {
         let mut done = false;
         let mut editor_rect = area;
         let item = &mut self.board.items[index];
+        let is_image = item.is_image();
         let text = match &mut item.kind {
             Kind::Note { text, .. } => text,
             Kind::Frame { title } => title,
             Kind::Placeholder { label } => label,
+            Kind::Image => &mut item.caption,
             _ => return,
         };
         egui::Area::new(egui::Id::unique("coreboard-text-editor"))
@@ -1071,6 +1155,8 @@ impl CoreBoardApp {
                 let edit = if centered {
                     edit.align(Align2::CENTER_TOP)
                         .hint_text("Name this slot, e.g. Front view")
+                } else if is_image {
+                    edit.hint_text("Add a caption, e.g. Sargent, 1885, rim light")
                 } else {
                     edit
                 };
@@ -2014,6 +2100,7 @@ impl CoreBoardApp {
                     Key::L if !m.command && m.shift => self.toggle_pin(canvas),
                     Key::L if !m.command => self.toggle_lock(),
                     Key::T if m.command => self.open_tags_window(),
+                    Key::D if m.command => self.duplicate_selection(),
                     Key::F if m.command => self.open_search(),
                     Key::ArrowLeft if m.alt => self.align_selection(Align::Left),
                     Key::ArrowRight if m.alt => self.align_selection(Align::Right),
@@ -2040,6 +2127,7 @@ impl CoreBoardApp {
                     Key::R if !m.command => self.rotate_selection(if m.shift { -1 } else { 1 }),
                     Key::G if !m.command => self.arrange_grid(m.shift),
                     Key::M if !m.command => self.toggle_selection(|i| &mut i.flip_x),
+                    Key::B if !m.command && m.shift => self.cycle_board_values(),
                     Key::B if !m.command => self.toggle_selection(|i| &mut i.grayscale),
                     Key::V if !m.command => self.cycle_analysis(!m.shift),
                     Key::C if !m.command && m.shift => self.turn_spiral(),
@@ -2338,6 +2426,8 @@ impl CoreBoardApp {
             && let Some(pos) = pointer.interact_pos().filter(|p| canvas.contains(*p))
             && !self.edit_rect.is_some_and(|r| r.contains(pos))
             && !over_ui(&ctx, pos)
+            && !self.draw_mode
+            && self.crop_mode.is_none()
             && let Some(id) = self.hit(canvas, pos)
         {
             self.begin_edit(id, false);
@@ -2406,8 +2496,27 @@ impl CoreBoardApp {
             let opacity = opacity * self.search_dim(item);
             let tint = Color32::WHITE.gamma_multiply(opacity);
             let handle = !item.locked;
+            let caption_h = if item.is_image() && !item.caption.trim().is_empty() && !editing {
+                let font = board::CAPTION_FONT * zoom;
+                let galley = painter.layout(
+                    item.caption.clone(),
+                    FontId::proportional(font.max(1.0)),
+                    Color32::from_gray(205).gamma_multiply(opacity),
+                    rect.width().max(1.0),
+                );
+                let h = board::CAPTION_GAP * zoom + galley.size().y;
+                if font >= 5.0 {
+                    let pos = pos2(rect.min.x, rect.max.y + board::CAPTION_GAP * zoom);
+                    painter.galley(pos, galley, Color32::from_gray(205));
+                }
+                h
+            } else {
+                0.0
+            };
             if !item.tags.is_empty() && (selected || hover.is_some_and(|p| rect.contains(p))) {
-                tag_rows.push((rect, item.tags.clone()));
+                // Tag chips go under the caption.
+                let below = Rect::from_min_max(rect.min, rect.max + vec2(0.0, caption_h));
+                tag_rows.push((below, item.tags.clone()));
             }
             if item.locked || item.pinned.is_some() {
                 badge_rows.push((rect, item.clone()));
@@ -2415,7 +2524,8 @@ impl CoreBoardApp {
             match &item.kind {
                 Kind::Image => {}
                 Kind::Palette { colors } => {
-                    draw_palette(&painter, rect, colors, opacity);
+                    let colors = self.view_palette(colors);
+                    draw_palette(&painter, rect, &colors, opacity);
                     if selected {
                         draw_selection(&painter, rect, handle);
                     }
@@ -2451,7 +2561,12 @@ impl CoreBoardApp {
             }
             let cropping = self.crop_mode == Some(item.id);
             let full = self.full_image_rect(canvas, item);
-            match self.texture(&ctx, &item.file, Filter::for_item(item)) {
+            let filter = match self.board_values {
+                1 => Filter::Gray,
+                2 => Filter::Study(Analysis::Values3),
+                _ => Filter::for_item(item),
+            };
+            match self.texture(&ctx, &item.file, filter) {
                 Texture::Ready(tex) => {
                     let tex = tex.id();
                     if cropping {
@@ -2619,6 +2734,10 @@ impl CoreBoardApp {
                 "  ·  on top"
             } else if self.draw_mode {
                 "  ·  DRAW: drag on an image, Esc when done"
+            } else if self.board_values == 1 {
+                "  ·  VALUES: whole board in grayscale (Shift+B)"
+            } else if self.board_values == 2 {
+                "  ·  VALUES: whole board in 3 tones (Shift+B)"
             } else if self.crop_mode.is_some() {
                 "  ·  CROP: drag over the image, Enter when done"
             } else {
@@ -2662,6 +2781,9 @@ impl CoreBoardApp {
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
                         D / Shift+D            draw on images / hide drawings\n\
+                        Ctrl+D                 duplicate\n\
+                        Double-click image     caption\n\
+                        Shift+B                whole board in values\n\
                         X / Shift+X            crop (drag) / reset crop\n\
                         P / Shift+P            extract 6 / 10 color palette\n\
                         N / Shift+N            new note / note color\n\
