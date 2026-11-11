@@ -256,9 +256,11 @@ cargo run --release              # reopens the board you used last
 cargo run --release -- ~/boards/moodboard   # open (or create) a board in any folder
 ```
 
-Installers are built by GitHub Actions (`.github/workflows/release.yml`): run **Build installers**
-from the Actions tab to get them as downloadable artifacts, or push a version tag (`v0.1.0`) to publish
-a release. The Windows installer script is `installer/coreboard.iss` (Inno Setup).
+Installers are built by GitHub Actions (`.github/workflows/release.yml`). To ship a new version, bump
+`version` in `Cargo.toml` and push to `main`: the workflow builds Windows, macOS and Linux and publishes
+release `v<version>` with what changed. Running **Build installers** by hand from the Actions tab
+just builds (files under the run's Artifacts); tick **publish** to release, and set **commit** to
+build an older commit. The Windows installer script is `installer/coreboard.iss` (Inno Setup).
 
 ## Linux build notes
 

@@ -1,15 +1,28 @@
-# Builds ready-to-install Core Board downloads for Windows, macOS and Linux.
+# Builds ready-to-install Core Board downloads for Windows, macOS and Linux, and publishes each
+# version as a GitHub Release (tag v<version>, with every platform's files).
 #
-# - Run it by hand (Actions tab → "Build installers" → Run workflow) to get the files as
-#   downloadable artifacts of that run.
-# - Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to also publish them
-#   as a GitHub Release.
+# - Pushing to main publishes automatically when Cargo.toml's version has no release yet, so
+#   bumping the version is all it takes to ship one. Other pushes to main build nothing.
+# - Run it by hand (Actions tab → "Build installers" → Run workflow) to just build (files under
+#   the run's Artifacts), or with "publish" to release; "commit" builds an older commit, e.g. to
+#   add a past version to the releases.
+# - Pushing a v* tag builds and releases that tag.
 
 name: Build installers
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish as a release (v<version from Cargo.toml>)
+        type: boolean
+        default: false
+      commit:
+        description: Commit to build (empty = the branch you run it on)
+        required: false
+        default: ""
   push:
+    branches: [main]
     tags: ["v*"]
 
 permissions:
@@ -19,10 +32,66 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Decides what this run does: which commit and version, and whether to build and release.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      latest: ${{ steps.plan.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          fetch-depth: 0
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          TAG="v$VERSION"
+          RELEASED=false
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null && RELEASED=true
+          case "$EVENT" in
+            workflow_dispatch) BUILD=true; PUBLISH=$PUBLISH_INPUT ;;
+            push)
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                if [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+                  echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $VERSION"
+                  exit 1
+                fi
+                BUILD=true; PUBLISH=true
+              elif [ "$RELEASED" = false ]; then
+                BUILD=true; PUBLISH=true
+              else
+                BUILD=false; PUBLISH=false
+              fi ;;
+          esac
+          # Mark it "latest" only if no newer version has been released.
+          NEWEST=$( (git ls-remote --tags origin 'refs/tags/v*' | sed -n 's#.*refs/tags/v\([0-9.]*\)$#\1#p'; echo "$VERSION") | sort -V | tail -1)
+          LATEST=false
+          [ "$NEWEST" = "$VERSION" ] && LATEST=true
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "version=$VERSION"
+            echo "build=$BUILD"
+            echo "publish=$PUBLISH"
+            echo "latest=$LATEST"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION · build: $BUILD · publish: $PUBLISH · latest: $LATEST"
+
   windows:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
@@ -50,9 +119,13 @@ jobs:
           path: dist/*
 
   macos:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -113,18 +186,14 @@ jobs:
           path: dist/*
 
   linux:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     # The oldest supported Ubuntu, so the binary also runs on older distributions.
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Tag matches Cargo.toml version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $VERSION"
-            exit 1
-          fi
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -148,8 +217,8 @@ jobs:
           path: dist/*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos, linux]
+    needs: [plan, windows, macos, linux]
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -158,6 +227,10 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.plan.outputs.version }}
+          target_commitish: ${{ needs.plan.outputs.sha }}
+          name: Core Board ${{ needs.plan.outputs.version }}
+          make_latest: ${{ needs.plan.outputs.latest }}
           files: dist/*
           # "What's new" from the commits since the previous version, after the install steps.
           generate_release_notes: true
