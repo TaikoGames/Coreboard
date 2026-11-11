@@ -17,9 +17,11 @@ use crate::export;
 use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
+mod draw;
 mod organize;
 mod slots;
 mod watch;
+use draw::{item_mark_shapes, preview_mark};
 use organize::Align;
 use slots::{draw_placeholder, placeholder_label_rect};
 
@@ -151,6 +153,11 @@ enum Drag {
     Crop {
         start: Pos2,
     },
+    /// Drawing a mark on an image (screen points so far).
+    Draw {
+        item: u64,
+        points: Vec<Pos2>,
+    },
 }
 
 pub struct CoreBoardApp {
@@ -170,6 +177,11 @@ pub struct CoreBoardApp {
     picker: bool,
     /// The image being cropped, if crop mode is on.
     crop_mode: Option<u64>,
+    /// Drawing on images instead of selecting and moving.
+    draw_mode: bool,
+    draw_tool: board::MarkShape,
+    draw_color: u8,
+    show_marks: bool,
     /// The note or frame whose text is being edited.
     editing: Option<u64>,
     /// Its contents before editing (None for a just-created item), to skip no-op undo steps.
@@ -240,6 +252,10 @@ impl CoreBoardApp {
             samples: HashMap::new(),
             picker: false,
             crop_mode: None,
+            draw_mode: false,
+            draw_tool: board::MarkShape::Arrow,
+            draw_color: 0,
+            show_marks: true,
             editing: None,
             edit_original: None,
             edit_focus_pending: false,
@@ -1901,6 +1917,7 @@ impl CoreBoardApp {
         self.redo.clear();
         self.drag = Drag::None;
         self.crop_mode = None;
+        self.draw_mode = false;
         self.radial = None;
         self.finder = None;
         self.watch_pending.clear();
@@ -2036,6 +2053,13 @@ impl CoreBoardApp {
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::Escape if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::Escape if self.radial.is_some() => self.radial = None,
+                    Key::Escape if self.draw_mode => self.toggle_draw_mode(),
+                    Key::D if !m.command && m.shift => {
+                        self.show_marks = !self.show_marks;
+                        let state = if self.show_marks { "shown" } else { "hidden" };
+                        self.toast(format!("Drawings {state}"));
+                    }
+                    Key::D if !m.command => self.toggle_draw_mode(),
                     Key::I if !m.command => {
                         self.picker = !self.picker;
                         let state = if self.picker {
@@ -2113,6 +2137,15 @@ impl CoreBoardApp {
             let space = ctx.input(|i| i.key_down(Key::Space));
             self.drag = if button != egui::PointerButton::Primary || space {
                 Drag::Pan
+            } else if self.draw_mode {
+                // Drag on an image to draw on it; anywhere else pans.
+                match self.drawable_at(canvas, pos) {
+                    Some(item) => Drag::Draw {
+                        item,
+                        points: vec![pos],
+                    },
+                    None => Drag::Pan,
+                }
             } else if self.crop_mode.is_some() {
                 Drag::Crop { start: pos }
             } else if let Some(id) = self.hit_handle(canvas, pos) {
@@ -2173,7 +2206,7 @@ impl CoreBoardApp {
         };
         let zoom = self.board.view.zoom;
         match &mut self.drag {
-            Drag::None | Drag::Marquee { .. } | Drag::Crop { .. } => {}
+            Drag::None | Drag::Marquee { .. } | Drag::Crop { .. } | Drag::Draw { .. } => {}
             Drag::Pan => {
                 self.board.view.offset[0] += delta.x;
                 self.board.view.offset[1] += delta.y;
@@ -2212,6 +2245,12 @@ impl CoreBoardApp {
                     self.touch();
                 }
             }
+        }
+
+        if matches!(self.drag, Drag::Draw { .. })
+            && let Some(pos) = pointer.interact_pos()
+        {
+            self.extend_stroke(pos);
         }
 
         // Moves snap their group's edges and centers to nearby items (hold Alt to move freely).
@@ -2257,6 +2296,7 @@ impl CoreBoardApp {
                         self.selection = HashSet::from([id]);
                     }
                 }
+                Drag::Draw { item, points } => self.finish_stroke(canvas, item, points),
                 Drag::Crop { start } => {
                     if let Some(end) = pointer.interact_pos() {
                         let area = Rect::from_two_pos(start, end);
@@ -2445,6 +2485,13 @@ impl CoreBoardApp {
             if item.guide != Guide::None {
                 draw_guide(&painter, rect, item.guide, item.guide_orientation);
             }
+            if self.show_marks && !item.marks.is_empty() {
+                // Drawings on parts that are cropped away stay hidden.
+                let clipped = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
+                for mark in &item.marks {
+                    clipped.extend(item_mark_shapes(rect, item, mark, zoom, opacity));
+                }
+            }
             if cropping {
                 painter.rect_stroke(
                     full,
@@ -2472,6 +2519,18 @@ impl CoreBoardApp {
             self.draw_tags(&painter, rect, &tags);
         }
         self.paint_snap_lines(&painter, canvas);
+        if let Drag::Draw { item, points } = &self.drag
+            && let Some(target) = self.board.items.iter().find(|i| i.id == *item)
+        {
+            let rect = self.item_screen_rect(canvas, target);
+            painter.extend(preview_mark(
+                rect,
+                self.draw_tool,
+                self.draw_color,
+                points,
+                zoom,
+            ));
+        }
         // The slot under a dragged image is hidden by it, so mark it on top of everything.
         if let Some(slot) = drop_target.and_then(|id| self.board.items.iter().find(|i| i.id == id))
         {
@@ -2557,6 +2616,8 @@ impl CoreBoardApp {
             },
             if self.board.window.always_on_top {
                 "  ·  on top"
+            } else if self.draw_mode {
+                "  ·  DRAW: drag on an image, Esc when done"
             } else if self.crop_mode.is_some() {
                 "  ·  CROP: drag over the image, Enter when done"
             } else {
@@ -2599,6 +2660,7 @@ impl CoreBoardApp {
                         V / Shift+V            value, saturation, noise, squint\n\
                         C / Shift+C            composition guide / turn spiral\n\
                         I                      color picker (HSV + value)\n\
+                        D / Shift+D            draw on images / hide drawings\n\
                         X / Shift+X            crop (drag) / reset crop\n\
                         P / Shift+P            extract 6 / 10 color palette\n\
                         N / Shift+N            new note / note color\n\
@@ -2664,6 +2726,14 @@ impl eframe::App for CoreBoardApp {
         self.edit_overlay(&ctx, canvas);
         self.finder_window(&ctx, canvas);
         self.search_bar(&ctx, canvas);
+        self.draw_toolbar(&ctx);
+        if self.draw_mode
+            && ctx
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| canvas.contains(p) && !over_ui(&ctx, p))
+        {
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
         self.tags_window(&ctx);
         self.align_toolbar(&ctx, canvas);
         self.paint_radial(&ctx);

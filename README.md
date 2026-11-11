@@ -63,6 +63,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Frame | **Ctrl+G** wraps the selection in a titled frame (nothing selected: an empty one) |
 | Edit text | **Double-click** a note, or a frame's title bar |
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
+| Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
@@ -179,6 +180,16 @@ Select one or more images and press **P** (or **Shift+P** for 10 colors). Each i
 its dominant colors just below it, most common first, labeled with hex and perceptual value (L*)
 when big enough to read. Cropped images only use the visible part. Palettes are board items like
 images: move, resize, delete and export them, and the color picker (**I**) reads their swatches.
+
+## Drawing on images
+
+Press **D** (or **Done** / **Esc** to stop) and a toolbar appears at the top: **Pen**, **Arrow**,
+**Circle** or **Box**, and six marker colors. Drag on an image to draw on it, e.g. an arrow at the
+rim light or a circle around a detail to copy. Dragging on empty space pans.
+
+Drawings belong to the picture: they move and resize with it, and turn, flip and crop along with it.
+Each stroke is one undo step (**Ctrl+Z**). **Clear** removes the drawings on the selected images,
+**Hide** / **Shift+D** hides or shows all drawings, and drawings are included in PNG exports.
 
 ## Cropping
 

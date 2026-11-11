@@ -11,8 +11,8 @@ use image::imageops::{self, FilterType};
 use image::{DynamicImage, Rgba, RgbaImage};
 
 use crate::board::{
-    FRAME_FONT, FRAME_TITLE_HEIGHT, Item, Kind, NOTE_COLORS, NOTE_FONT, NOTE_PAD, Watermark,
-    WatermarkPosition,
+    FRAME_FONT, FRAME_TITLE_HEIGHT, Item, Kind, MARK_COLORS, MARK_WIDTH, Mark, NOTE_COLORS,
+    NOTE_FONT, NOTE_PAD, Watermark, WatermarkPosition,
 };
 use crate::filters::{self, Filter};
 
@@ -108,6 +108,8 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
         }
         let img = img.resize_exact(w, h, FilterType::CatmullRom).to_rgba8();
         imageops::overlay(&mut canvas, &img, x, y);
+        let marks: Vec<Mark> = item.marks.iter().map(|m| item.local_mark(m)).collect();
+        draw_marks(&mut canvas, (x, y, w, h), &marks, scale);
     }
 
     let text = watermark.text.trim();
@@ -296,6 +298,78 @@ fn blend_rect(
             let p = canvas.get_pixel_mut(px as u32, py as u32);
             for c in 0..3 {
                 p[c] = (color[c] as f32 * alpha + p[c] as f32 * (1.0 - alpha)).round() as u8;
+            }
+        }
+    }
+}
+
+/// Drawings on an item, as on the board: a dark halo under each colored stroke.
+fn draw_marks(
+    canvas: &mut RgbaImage,
+    (x, y, w, h): (i64, i64, u32, u32),
+    marks: &[Mark],
+    scale: f32,
+) {
+    let width = (MARK_WIDTH * scale).clamp(1.5, 24.0);
+    for mark in marks {
+        let lines = mark.polylines(w as f32, h as f32, width);
+        let color = MARK_COLORS[mark.color as usize % MARK_COLORS.len()];
+        for (radius, rgb, alpha) in [
+            ((width + 2.5) / 2.0, [0, 0, 0], 110.0 / 255.0),
+            (width / 2.0, color, 1.0),
+        ] {
+            for line in &lines {
+                for pair in line.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / (radius * 0.5).max(0.5))
+                        .ceil()
+                        .max(1.0) as usize;
+                    for i in 0..=steps {
+                        let t = i as f32 / steps as f32;
+                        let cx = x as f32 + a[0] + (b[0] - a[0]) * t;
+                        let cy = y as f32 + a[1] + (b[1] - a[1]) * t;
+                        stamp_disc(canvas, (x, y, w, h), cx, cy, radius, rgb, alpha);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A filled, slightly soft-edged disc, blended over the canvas within the item's rect `clip`
+/// (drawings on cropped-away parts stay hidden, as on the board).
+fn stamp_disc(
+    canvas: &mut RgbaImage,
+    clip: (i64, i64, u32, u32),
+    cx: f32,
+    cy: f32,
+    r: f32,
+    rgb: [u8; 3],
+    alpha: f32,
+) {
+    let (lx, ly) = (clip.0.max(0), clip.1.max(0));
+    let hx = (clip.0 + clip.2 as i64).min(canvas.width() as i64);
+    let hy = (clip.1 + clip.3 as i64).min(canvas.height() as i64);
+    let (x0, x1) = ((cx - r - 1.0).floor() as i64, (cx + r + 1.0).ceil() as i64);
+    let (y0, y1) = ((cy - r - 1.0).floor() as i64, (cy + r + 1.0).ceil() as i64);
+    for py in y0.max(ly)..y1.min(hy) {
+        for px in x0.max(lx)..x1.min(hx) {
+            let d = (px as f32 + 0.5 - cx).hypot(py as f32 + 0.5 - cy);
+            let coverage = (r + 0.5 - d).clamp(0.0, 1.0) * alpha;
+            if coverage <= 0.0 {
+                continue;
+            }
+            let p = canvas.get_pixel_mut(px as u32, py as u32);
+            for c in 0..3 {
+                // Stamps overlap along a stroke; keep the strongest coverage, don't stack it.
+                let target = rgb[c] as f32;
+                let current = p[c] as f32;
+                let blended = target * coverage + current * (1.0 - coverage);
+                p[c] = if (target - blended).abs() < (target - current).abs() {
+                    blended.round() as u8
+                } else {
+                    p[c]
+                };
             }
         }
     }

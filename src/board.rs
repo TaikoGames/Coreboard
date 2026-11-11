@@ -53,7 +53,99 @@ pub struct Item {
     /// Lowercase words for search, e.g. "forest", "armor".
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Drawings on the item (arrows, circles, pen strokes); they move, resize, rotate, flip and
+    /// crop along with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<Mark>,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarkShape {
+    #[default]
+    Pen,
+    Arrow,
+    Circle,
+    Box,
+}
+
+impl MarkShape {
+    pub const ALL: [Self; 4] = [Self::Pen, Self::Arrow, Self::Circle, Self::Box];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pen => "Pen",
+            Self::Arrow => "Arrow",
+            Self::Circle => "Circle",
+            Self::Box => "Box",
+        }
+    }
+}
+
+/// One drawing on an item. Pen strokes keep every point; the other shapes use the first and
+/// last point (arrow: tail to head; circle and box: opposite corners).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mark {
+    pub shape: MarkShape,
+    /// Points in the source picture's own 0..1 space (before crop, rotation and flip), so a
+    /// drawing stays on the same spot of the picture whatever is done to it later.
+    pub points: Vec<[f32; 2]>,
+    /// Index into [`MARK_COLORS`].
+    pub color: u8,
+}
+
+impl Mark {
+    /// The mark as polylines in pixels, for an item drawn `w` by `h` with strokes `width` wide.
+    pub fn polylines(&self, w: f32, h: f32, width: f32) -> Vec<Vec<[f32; 2]>> {
+        let px = |q: [f32; 2]| [q[0] * w, q[1] * h];
+        let (Some(first), Some(last)) = (self.points.first(), self.points.last()) else {
+            return Vec::new();
+        };
+        let (a, b) = (px(*first), px(*last));
+        match self.shape {
+            MarkShape::Pen => vec![self.points.iter().map(|q| px(*q)).collect()],
+            MarkShape::Arrow => {
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                let len = dx.hypot(dy);
+                if len < 1e-3 {
+                    return Vec::new();
+                }
+                let head = (width * 4.0).max(10.0).min(len * 0.6);
+                let angle = dy.atan2(dx);
+                let wing = |off: f32| {
+                    [
+                        b[0] - head * (angle + off).cos(),
+                        b[1] - head * (angle + off).sin(),
+                    ]
+                };
+                vec![vec![a, b], vec![wing(0.45), b, wing(-0.45)]]
+            }
+            MarkShape::Circle => {
+                let center = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                let (rx, ry) = ((b[0] - a[0]).abs() / 2.0, (b[1] - a[1]).abs() / 2.0);
+                let ring = (0..=48)
+                    .map(|i| {
+                        let t = i as f32 / 48.0 * std::f32::consts::TAU;
+                        [center[0] + rx * t.cos(), center[1] + ry * t.sin()]
+                    })
+                    .collect();
+                vec![ring]
+            }
+            MarkShape::Box => vec![vec![a, [b[0], a[1]], b, [a[0], b[1]], a]],
+        }
+    }
+}
+
+/// Marker colors that read on most pictures: red, yellow, cyan, green, white, black.
+pub const MARK_COLORS: [[u8; 3]; 6] = [
+    [255, 64, 64],
+    [255, 214, 0],
+    [0, 214, 255],
+    [60, 220, 90],
+    [255, 255, 255],
+    [20, 20, 20],
+];
+/// Stroke width in world units, so marks scale with the board like the picture does.
+pub const MARK_WIDTH: f32 = 5.0;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -114,6 +206,7 @@ impl Default for Item {
             locked: false,
             pinned: None,
             tags: Vec::new(),
+            marks: Vec::new(),
         }
     }
 }
@@ -196,6 +289,29 @@ impl Item {
         let (au, av) = self.display_to_tex((x0, y0));
         let (bu, bv) = self.display_to_tex((x1, y1));
         self.crop = [au.min(bu), av.min(bv), au.max(bu), av.max(bv)];
+    }
+
+    /// Where a picture point (see [`Mark::points`]) shows on the item, in 0..1 of its visible
+    /// rect. Points cropped away fall outside 0..1.
+    pub fn mark_to_local(&self, p: [f32; 2]) -> [f32; 2] {
+        let (x, y) = self.tex_to_display((p[0], p[1]));
+        let [x0, y0, x1, y1] = self.display_crop();
+        [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)]
+    }
+
+    /// Inverse of [`Self::mark_to_local`].
+    pub fn local_to_mark(&self, q: [f32; 2]) -> [f32; 2] {
+        let [x0, y0, x1, y1] = self.display_crop();
+        let (u, v) = self.display_to_tex((x0 + q[0] * (x1 - x0), y0 + q[1] * (y1 - y0)));
+        [u, v]
+    }
+
+    /// A mark as it appears on this item: its points in 0..1 of the visible rect.
+    pub fn local_mark(&self, mark: &Mark) -> Mark {
+        Mark {
+            points: mark.points.iter().map(|p| self.mark_to_local(*p)).collect(),
+            ..mark.clone()
+        }
     }
 
     pub fn is_cropped(&self) -> bool {
@@ -613,6 +729,74 @@ mod tests {
         };
         turned.cover([200.0, 200.0]);
         assert!(close(turned.crop, [0.0, 0.25, 1.0, 0.75]));
+    }
+
+    #[test]
+    fn marks_follow_the_picture_through_rotation_flip_and_crop() {
+        let mut item = Item::default();
+        // A mark near the picture's top-right corner...
+        let picture_point = item.local_to_mark([0.9, 0.1]);
+        // ...after a clockwise quarter turn sits at the bottom-right, and mirroring then moves
+        // it to the bottom-left.
+        item.rotation = 1;
+        item.flip_x = true;
+        let [x, y] = item.mark_to_local(picture_point);
+        assert!((x - 0.1).abs() < 1e-5 && (y - 0.9).abs() < 1e-5, "{x} {y}");
+        // Cropping to the right half of the picture's display keeps points mapped to the same
+        // picture spot, at new local coordinates.
+        let mut cropped = Item::default();
+        cropped.set_display_crop([0.5, 0.0, 1.0, 1.0]);
+        let p = Item::default().local_to_mark([0.75, 0.5]);
+        let [x, y] = cropped.mark_to_local(p);
+        assert!((x - 0.5).abs() < 1e-5 && (y - 0.5).abs() < 1e-5);
+        // And round trips for every orientation.
+        for rotation in 0..4 {
+            for flip_x in [false, true] {
+                let mut item = Item {
+                    rotation,
+                    flip_x,
+                    ..Item::default()
+                };
+                item.set_display_crop([0.1, 0.2, 0.7, 0.9]);
+                let q = item.mark_to_local(item.local_to_mark([0.3, 0.6]));
+                assert!((q[0] - 0.3).abs() < 1e-5 && (q[1] - 0.6).abs() < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn mark_geometry() {
+        let mark = |shape, points: Vec<[f32; 2]>| Mark {
+            shape,
+            points,
+            color: 0,
+        };
+        // Arrow from the top-left quarter to the center of a 200x100 item: a shaft and a head
+        // whose tip is the arrow's end.
+        let arrow =
+            mark(MarkShape::Arrow, vec![[0.25, 0.25], [0.5, 0.5]]).polylines(200.0, 100.0, 4.0);
+        assert_eq!(arrow.len(), 2);
+        assert_eq!(arrow[0], vec![[50.0, 25.0], [100.0, 50.0]]);
+        assert_eq!(arrow[1][1], [100.0, 50.0]);
+        // A circle closes on itself and stays inside its box.
+        let ring =
+            &mark(MarkShape::Circle, vec![[0.0, 0.0], [1.0, 1.0]]).polylines(100.0, 50.0, 4.0)[0];
+        assert!((ring[0][0] - ring[48][0]).abs() < 1e-3 && (ring[0][1] - ring[48][1]).abs() < 1e-3);
+        assert!(
+            ring.iter()
+                .all(|p| (-0.01..=100.01).contains(&p[0]) && (-0.01..=50.01).contains(&p[1]))
+        );
+        // A box has its four corners and closes.
+        let boxed =
+            &mark(MarkShape::Box, vec![[0.1, 0.2], [0.5, 0.6]]).polylines(10.0, 10.0, 1.0)[0];
+        assert_eq!(boxed.len(), 5);
+        assert_eq!(boxed[0], boxed[4]);
+        // A zero-length arrow draws nothing.
+        assert!(
+            mark(MarkShape::Arrow, vec![[0.3, 0.3], [0.3, 0.3]])
+                .polylines(10.0, 10.0, 1.0)
+                .is_empty()
+        );
     }
 
     #[test]
