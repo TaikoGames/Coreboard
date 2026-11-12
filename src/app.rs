@@ -18,6 +18,7 @@ use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
 mod draw;
+mod focus;
 mod motion;
 mod organize;
 mod slots;
@@ -187,6 +188,8 @@ pub struct CoreBoardApp {
     board_values: u8,
     motion: motion::Motion,
     animations: bool,
+    /// The image open in focus view.
+    focus: Option<focus::Focus>,
     /// The note or frame whose text is being edited.
     editing: Option<u64>,
     /// Its contents before editing (None for a just-created item), to skip no-op undo steps.
@@ -264,6 +267,7 @@ impl CoreBoardApp {
             board_values: 0,
             motion: motion::Motion::default(),
             animations: boards::settings().animations,
+            focus: None,
             editing: None,
             edit_original: None,
             edit_focus_pending: false,
@@ -2024,6 +2028,7 @@ impl CoreBoardApp {
         self.radial = None;
         self.finder = None;
         self.reset_motion();
+        self.focus = None;
         self.watch_pending.clear();
         self.watch_error = None;
         self.dirty_since = None;
@@ -2158,6 +2163,9 @@ impl CoreBoardApp {
                     Key::X if !m.command && m.shift => self.reset_crop(canvas),
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
+                    Key::Enter if !m.command && self.editing.is_none() => {
+                        self.open_focus(canvas, hover);
+                    }
                     Key::Escape if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::Escape if self.radial.is_some() => self.radial = None,
                     Key::Escape if self.draw_mode => self.toggle_draw_mode(),
@@ -2837,6 +2845,7 @@ impl CoreBoardApp {
                         Double-click           edit note, frame or slot label\n\
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
+                        Enter                  focus view: image big, ← → step through\n\
                         F                      fit to view\n\
                         1                      zoom 100%\n\
                         H                      toggle this help";
@@ -2866,6 +2875,26 @@ impl CoreBoardApp {
     }
 }
 
+impl CoreBoardApp {
+    /// Editors, toolbars and menus that sit over the board (hidden while focus view is open).
+    fn board_overlays(&mut self, ctx: &egui::Context, canvas: Rect) {
+        self.edit_overlay(ctx, canvas);
+        self.finder_window(ctx, canvas);
+        self.search_bar(ctx, canvas);
+        self.draw_toolbar(ctx);
+        if self.draw_mode
+            && ctx
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| canvas.contains(p) && !over_ui(ctx, p))
+        {
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        self.tags_window(ctx);
+        self.align_toolbar(ctx, canvas);
+        self.paint_radial(ctx);
+    }
+}
+
 impl eframe::App for CoreBoardApp {
     /// Fully clear, so the board background alone decides how much desktop shows through.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -2879,33 +2908,29 @@ impl eframe::App for CoreBoardApp {
         let canvas = ui.max_rect();
         self.sync_pinned();
         // Claim the pointer so egui treats the whole window as one draggable surface.
-        ui.interact(
+        let response = ui.interact(
             canvas,
             ui.scope_id().with("canvas"),
             Sense::click_and_drag(),
         );
-        // Dialogs are modal: the board ignores input while one is open.
-        if !self.show_export && !self.show_boards && !self.show_tags {
+        // Dialogs are modal: the board ignores input while one is open, and while focus view
+        // is open only it gets input.
+        if self.focus_open() {
+            if !self.show_export && !self.show_boards {
+                self.focus_input(&ctx, canvas, &response);
+            }
+        } else if !self.show_export && !self.show_boards && !self.show_tags {
             self.handle_input(ui, canvas);
         }
         // After input, so a change made this frame (undo, align, grid...) glides from where
         // things were drawn last frame instead of jumping.
         self.update_motion(&ctx, canvas);
         self.paint(ui, canvas);
-        self.edit_overlay(&ctx, canvas);
-        self.finder_window(&ctx, canvas);
-        self.search_bar(&ctx, canvas);
-        self.draw_toolbar(&ctx);
-        if self.draw_mode
-            && ctx
-                .input(|i| i.pointer.hover_pos())
-                .is_some_and(|p| canvas.contains(p) && !over_ui(&ctx, p))
-        {
-            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        if self.focus_open() {
+            self.paint_focus(&ctx, canvas);
+        } else {
+            self.board_overlays(&ctx, canvas);
         }
-        self.tags_window(&ctx);
-        self.align_toolbar(&ctx, canvas);
-        self.paint_radial(&ctx);
         self.export_dialog(&ctx);
         self.boards_window(&ctx);
         self.receive_finds();

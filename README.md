@@ -68,6 +68,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
 | Duplicate | **Ctrl+D** copies the selection right beside it |
 | Caption | **Double-click** an image to write a caption under it |
+| Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
@@ -195,6 +196,20 @@ a soft shadow and **swings** with your motion, and a **flicked** image, or the w
 fling it while panning, coasts to a stop. Grab anything to stop it.
 
 Prefer a still board? Untick **Animations** in the Boards window (**Ctrl+O**); it's remembered.
+
+## Focus view
+
+Press **Enter** to study one image without the rest of the board around it. The selected image (or
+the one under the cursor) grows out of its spot to fill the window on a dark backdrop, with its
+caption and an *image 3 of 7* counter underneath.
+
+- **← →** (or **↑ ↓**, Page Up/Down) step through every image on the board in reading order: rows
+  top to bottom, each row left to right.
+- **Scroll** zooms into details, **drag** pans, **double-click** (or **F**) fits it again.
+- The study keys work on the image you're looking at: **V** value and saturation views, **C** guides,
+  **B** black and white, **Shift+B** whole-board values, **M** mirror, **R** rotate.
+- **Esc**, **Enter**, **Space** or a click on the backdrop shrinks it back into the board, with that
+  image selected. The board's view isn't touched.
 
 ## Captions, duplicates and whole-board values
 
