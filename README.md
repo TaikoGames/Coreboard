@@ -187,6 +187,15 @@ its dominant colors just below it, most common first, labeled with hex and perce
 when big enough to read. Cropped images only use the visible part. Palettes are board items like
 images: move, resize, delete and export them, and the color picker (**I**) reads their swatches.
 
+## Feels alive
+
+Core Board moves like a real board: things **glide** to their new places (grid arrange, align, undo,
+fit view) instead of jumping, new images, notes and copies **pop** in, a dragged image **lifts** with
+a soft shadow and **swings** with your motion, and a **flicked** image, or the whole board when you
+fling it while panning, coasts to a stop. Grab anything to stop it.
+
+Prefer a still board? Untick **Animations** in the Boards window (**Ctrl+O**); it's remembered.
+
 ## Captions, duplicates and whole-board values
 
 - **Captions**: double-click an image and type a short caption, e.g. *Sargent, 1885, rim light*

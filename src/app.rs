@@ -18,6 +18,7 @@ use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
 mod draw;
+mod motion;
 mod organize;
 mod slots;
 mod watch;
@@ -184,6 +185,8 @@ pub struct CoreBoardApp {
     show_marks: bool,
     /// Whole-board value check: 0 off, 1 grayscale, 2 three-tone notan.
     board_values: u8,
+    motion: motion::Motion,
+    animations: bool,
     /// The note or frame whose text is being edited.
     editing: Option<u64>,
     /// Its contents before editing (None for a just-created item), to skip no-op undo steps.
@@ -259,6 +262,8 @@ impl CoreBoardApp {
             draw_color: 0,
             show_marks: true,
             board_values: 0,
+            motion: motion::Motion::default(),
+            animations: boards::settings().animations,
             editing: None,
             edit_original: None,
             edit_focus_pending: false,
@@ -347,7 +352,7 @@ impl CoreBoardApp {
             .map(|i| Rect::from_min_size(pos2(i.pos[0], i.pos[1]), vec2(i.size[0], i.size[1])))
             .reduce(|a, b| a.union(b))
         else {
-            self.board.view = board::View::default();
+            self.fly_view(board::View::default());
             return;
         };
         let avail = canvas.size() * 0.9;
@@ -355,11 +360,10 @@ impl CoreBoardApp {
             .min(avail.y / bounds.height())
             .clamp(MIN_ZOOM, MAX_ZOOM);
         let offset = canvas.size() * 0.5 - bounds.center().to_vec2() * zoom;
-        self.board.view = board::View {
+        self.fly_view(board::View {
             offset: [offset.x, offset.y],
             zoom,
-        };
-        self.touch();
+        });
     }
 
     // ---------------------------------------------------------------- edits
@@ -1968,6 +1972,19 @@ impl CoreBoardApp {
                 }
                 ui.separator();
                 self.watch_controls(ui);
+                ui.separator();
+                if ui
+                    .checkbox(&mut self.animations, "Animations")
+                    .on_hover_text("Glides, pops, swing and flicks. Turn off for a still board.")
+                    .changed()
+                {
+                    boards::save_settings(&boards::Settings {
+                        animations: self.animations,
+                    });
+                    if !self.animations {
+                        self.reset_motion();
+                    }
+                }
                 ui.add_space(6.0);
                 close |= ui.button("Close").clicked();
             });
@@ -2006,6 +2023,7 @@ impl CoreBoardApp {
         self.draw_mode = false;
         self.radial = None;
         self.finder = None;
+        self.reset_motion();
         self.watch_pending.clear();
         self.watch_error = None;
         self.dirty_since = None;
@@ -2173,7 +2191,13 @@ impl CoreBoardApp {
                         self.toast(format!("Opacity {:.0}%", self.board.window.opacity * 100.0));
                         self.touch();
                     }
-                    Key::Num1 if !m.command => self.zoom_around(canvas, anchor, 1.0),
+                    Key::Num1 if !m.command => {
+                        // Work out the 100% view, then fly there.
+                        let before = self.board.view.clone();
+                        self.zoom_around(canvas, anchor, 1.0);
+                        let target = std::mem::replace(&mut self.board.view, before);
+                        self.fly_view(target);
+                    }
                     Key::H | Key::F1 => self.show_help = !self.show_help,
                     Key::Escape => self.selection.clear(),
                     _ => {}
@@ -2189,6 +2213,7 @@ impl CoreBoardApp {
         if let Some(pos) = hover.filter(|p| !over_ui(&ctx, *p)) {
             let factor = (scroll.y * 0.0025).exp() * pinch;
             if (factor - 1.0).abs() > f32::EPSILON {
+                self.stop_motion();
                 self.zoom_around(canvas, pos, self.board.view.zoom * factor);
             }
         }
@@ -2220,6 +2245,10 @@ impl CoreBoardApp {
             }
             (_, press) => press,
         };
+        if press.is_some() {
+            // Grabbing the board stops anything coasting or flying.
+            self.stop_motion();
+        }
         if let Some((pos, button)) = press
             && matches!(self.drag, Drag::None)
         {
@@ -2376,6 +2405,10 @@ impl CoreBoardApp {
                 self.fill_slot_with_item(slot, image);
             }
             match std::mem::replace(&mut self.drag, Drag::None) {
+                Drag::Move {
+                    moved: true, start, ..
+                } => self.release_flick(&ctx, start.into_keys().collect()),
+                Drag::Pan => self.release_flick(&ctx, Vec::new()),
                 Drag::Move { moved: false, .. } => {
                     // A plain click: drop the no-op history entry and collapse to one item.
                     self.undo.pop();
@@ -2473,7 +2506,7 @@ impl CoreBoardApp {
         let mut tag_rows = Vec::new();
         let mut badge_rows = Vec::new();
         for item in &items {
-            let rect = self.item_screen_rect(canvas, item);
+            let (rect, appear) = self.shown_rect(canvas, item);
             if let Kind::Note { text, .. } = &item.kind {
                 // Fit the note's height to its text, measured at 100% so zoom doesn't matter.
                 let wrap = (item.size[0] - 2.0 * NOTE_PAD).max(1.0);
@@ -2493,7 +2526,8 @@ impl CoreBoardApp {
             }
             let selected = self.selection.contains(&item.id);
             let editing = self.editing == Some(item.id);
-            let opacity = opacity * self.search_dim(item);
+            let opacity = opacity * self.search_dim(item) * appear;
+            let (tilt, lift) = self.swing_of(item.id);
             let tint = Color32::WHITE.gamma_multiply(opacity);
             let handle = !item.locked;
             let caption_h = if item.is_image() && !item.caption.trim().is_empty() && !editing {
@@ -2576,9 +2610,19 @@ impl CoreBoardApp {
                             crop: [0.0, 0.0, 1.0, 1.0],
                             ..item.clone()
                         };
-                        painter.add(image_shape(tex, full, &whole, dim));
+                        painter.add(image_shape(tex, full, &whole, dim, 0.0));
                     }
-                    painter.add(image_shape(tex, rect, item, tint));
+                    if lift > 0.01 {
+                        // Lifted off the board: a soft shadow below.
+                        for (grow, alpha) in [(14.0, 30.0), (7.0, 45.0), (2.0, 60.0)] {
+                            painter.rect_filled(
+                                rect.translate(vec2(0.0, 10.0 * lift)).expand(grow * lift),
+                                CornerRadius::same((grow * lift) as u8),
+                                Color32::from_black_alpha((alpha * lift) as u8),
+                            );
+                        }
+                    }
+                    painter.add(image_shape(tex, rect, item, tint, tilt));
                 }
                 Texture::Loading => {
                     painter.rect_filled(
@@ -2623,7 +2667,8 @@ impl CoreBoardApp {
                 );
                 continue;
             }
-            if self.selection.contains(&item.id) {
+            // The straight outline would look off on a swinging image; it's back once it settles.
+            if self.selection.contains(&item.id) && tilt.abs() < 0.01 {
                 draw_selection(&painter, rect, handle);
             }
         }
@@ -2843,6 +2888,9 @@ impl eframe::App for CoreBoardApp {
         if !self.show_export && !self.show_boards && !self.show_tags {
             self.handle_input(ui, canvas);
         }
+        // After input, so a change made this frame (undo, align, grid...) glides from where
+        // things were drawn last frame instead of jumping.
+        self.update_motion(&ctx, canvas);
         self.paint(ui, canvas);
         self.edit_overlay(&ctx, canvas);
         self.finder_window(&ctx, canvas);
@@ -3052,13 +3100,26 @@ fn draw_palette(painter: &egui::Painter, rect: Rect, colors: &[[u8; 3]], opacity
 
 /// An item's image drawn into `rect`: only its crop, turned by its clockwise quarter turns,
 /// then optionally mirrored left-to-right.
-fn image_shape(texture: egui::TextureId, rect: Rect, item: &Item, tint: Color32) -> egui::Shape {
+/// `tilt` turns the drawn quad around its center (radians), for an image swinging while dragged.
+fn image_shape(
+    texture: egui::TextureId,
+    rect: Rect,
+    item: &Item,
+    tint: Color32,
+    tilt: f32,
+) -> egui::Shape {
     let (quarters, flip_x) = (item.rotation % 4, item.flip_x);
+    let center = rect.center();
+    let (sin, cos) = tilt.sin_cos();
+    let turn = |p: Pos2| {
+        let d = p - center;
+        center + vec2(d.x * cos - d.y * sin, d.x * sin + d.y * cos)
+    };
     let corners = [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
+        turn(rect.left_top()),
+        turn(rect.right_top()),
+        turn(rect.right_bottom()),
+        turn(rect.left_bottom()),
     ];
     let [u0, v0, u1, v1] = item.crop;
     let uvs = [pos2(u0, v0), pos2(u1, v0), pos2(u1, v1), pos2(u0, v1)];

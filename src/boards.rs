@@ -16,6 +16,42 @@ fn recent_file() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "coreboard").map(|d| d.config_dir().join("recent.json"))
 }
 
+/// App-wide preferences, kept next to the recent-boards list.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// Glides, pops, swing and flicks. Off for anyone who prefers a still board.
+    pub animations: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { animations: true }
+    }
+}
+
+fn settings_file() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "coreboard")
+        .map(|d| d.config_dir().join("settings.json"))
+}
+
+pub fn settings() -> Settings {
+    settings_file()
+        .and_then(|f| fs::read(f).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_settings(settings: &Settings) {
+    let Some(file) = settings_file() else { return };
+    if let Some(parent) = file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(settings) {
+        let _ = fs::write(file, json);
+    }
+}
+
 /// Recently opened boards, most recent first, skipping folders that no longer exist.
 pub fn recent() -> Vec<PathBuf> {
     let Some(bytes) = recent_file().and_then(|f| fs::read(f).ok()) else {
