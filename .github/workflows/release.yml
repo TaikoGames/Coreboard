@@ -121,7 +121,9 @@ jobs:
   macos:
     needs: plan
     if: needs.plan.outputs.build == 'true'
-    runs-on: macos-latest
+    # Intel Macs: GitHub's Apple Silicon runners were often too busy to pick the job up, and the
+    # build makes one universal app for both kinds of Mac either way.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
