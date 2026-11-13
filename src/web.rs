@@ -20,7 +20,7 @@ pub fn link(text: &str) -> Option<String> {
     (is_web && !text.contains(char::is_whitespace)).then(|| text.to_string())
 }
 
-fn agent() -> ureq::Agent {
+pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         // The computer's own certificates, so it works wherever the browser does.
         .tls_config(
@@ -55,7 +55,7 @@ pub fn fetch_image(url: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-fn get(agent: &ureq::Agent, url: &str, limit: u64) -> Result<(Vec<u8>, String), String> {
+pub fn get(agent: &ureq::Agent, url: &str, limit: u64) -> Result<(Vec<u8>, String), String> {
     let mut response = agent.get(url).call().map_err(|err| match err {
         ureq::Error::StatusCode(code) => format!("the site answered {code}"),
         ureq::Error::HostNotFound => "couldn't reach that site (offline?)".into(),

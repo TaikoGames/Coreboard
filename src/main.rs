@@ -7,6 +7,7 @@ mod boards;
 mod export;
 mod filters;
 mod library;
+mod update;
 mod web;
 
 use std::path::PathBuf;

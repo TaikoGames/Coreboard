@@ -23,6 +23,7 @@ mod minimap;
 mod motion;
 mod organize;
 mod slots;
+mod updates;
 mod watch;
 use draw::{item_mark_shapes, preview_mark};
 use organize::Align;
@@ -192,6 +193,8 @@ pub struct CoreBoardApp {
     motion: motion::Motion,
     animations: bool,
     minimap: bool,
+    check_updates: bool,
+    updates: updates::Updates,
     /// The image open in focus view.
     focus: Option<focus::Focus>,
     /// The note or frame whose text is being edited.
@@ -277,6 +280,8 @@ impl CoreBoardApp {
             motion: motion::Motion::default(),
             animations: boards::settings().animations,
             minimap: boards::settings().minimap,
+            check_updates: boards::settings().check_updates,
+            updates: updates::Updates::default(),
             focus: None,
             editing: None,
             edit_original: None,
@@ -2042,14 +2047,12 @@ impl CoreBoardApp {
                     )
                     .changed();
                 if animations || minimap {
-                    boards::save_settings(&boards::Settings {
-                        animations: self.animations,
-                        minimap: self.minimap,
-                    });
+                    self.save_settings();
                 }
                 if animations && !self.animations {
                     self.reset_motion();
                 }
+                self.update_controls(ui);
                 ui.add_space(6.0);
                 close |= ui.button("Close").clicked();
             });
@@ -2957,6 +2960,7 @@ impl CoreBoardApp {
         self.align_toolbar(ctx, canvas);
         self.paint_radial(ctx);
         self.minimap(ctx, canvas);
+        self.update_banner(ctx, canvas);
     }
 }
 
@@ -3001,6 +3005,7 @@ impl eframe::App for CoreBoardApp {
         self.receive_finds();
         self.receive_thumbs(&ctx);
         self.receive_fetches(&ctx, canvas);
+        self.receive_updates(&ctx);
         self.receive_exports();
         self.receive_palettes();
         self.poll_watch(&ctx);

@@ -24,6 +24,8 @@ pub struct Settings {
     pub animations: bool,
     /// The overview of the board in the corner while part of it is off screen.
     pub minimap: bool,
+    /// Ask mikibutler.ca for a newer version on startup.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -31,6 +33,7 @@ impl Default for Settings {
         Self {
             animations: true,
             minimap: true,
+            check_updates: true,
         }
     }
 }

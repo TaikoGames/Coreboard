@@ -44,3 +44,5 @@ Name: "{autodesktop}\Core Board"; Filename: "{app}\coreboard.exe"; Tasks: deskto
 
 [Run]
 Filename: "{app}\coreboard.exe"; Description: "Open Core Board"; Flags: nowait postinstall skipifsilent
+; In-app updates run this installer silently: reopen Core Board when done.
+Filename: "{app}\coreboard.exe"; Flags: nowait skipifnotsilent
