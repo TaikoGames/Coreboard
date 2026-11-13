@@ -39,7 +39,7 @@ Boards created by name, and the first default board, live in your platform's dat
 
 | Action | Input |
 | --- | --- |
-| Add images | Drag & drop files, or **Ctrl+V** (image data or copied files) |
+| Add images | Drag & drop files, or **Ctrl+V** (image data, copied files, or a web link) |
 | Zoom | Scroll wheel / trackpad pinch (anchored at the cursor) |
 | Pan | Right or middle drag, or hold **Space** and drag |
 | Select | Click; **Shift/Ctrl+click** to toggle; drag on empty space to box-select |
@@ -68,6 +68,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Color palette | **P** extracts 6 main colors under each selected image (**Shift+P**: 10) |
 | Duplicate | **Ctrl+D** copies the selection right beside it |
 | Caption | **Double-click** an image to write a caption under it |
+| Surprise me | **S** opens a random image from this board or any recent one in focus view |
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
@@ -196,6 +197,25 @@ a soft shadow and **swings** with your motion, and a **flicked** image, or the w
 fling it while panning, coasts to a stop. Grab anything to stop it.
 
 Prefer a still board? Untick **Animations** in the Boards window (**Ctrl+O**); it's remembered.
+
+## Paste a web link
+
+Copy a picture's web address (right-click > *Copy image address* in the browser) and press **Ctrl+V**
+on the board: Core Board downloads it and drops it where the pointer is. It also works with the
+address of a page, such as an ArtStation, museum or blog page: the page's main picture (the one link
+previews show) is downloaded. Pasting onto a selected empty slot fills the slot.
+
+## Mini-map
+
+While part of the board is off screen, a small overview sits in the bottom-right corner with the
+visible part outlined. Click in it to glide there, or drag in it to move around. Untick
+**Mini-map** in the Boards window (**Ctrl+O**) to hide it.
+
+## Surprise me
+
+Press **S** for a random image from this board or any of your recent boards, shown in focus view.
+Great for rediscovering old references or picking a warm-up study. Press **S** again for another;
+a pick from a different board opens that board.
 
 ## Focus view
 

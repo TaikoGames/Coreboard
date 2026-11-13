@@ -22,11 +22,16 @@ fn recent_file() -> Option<PathBuf> {
 pub struct Settings {
     /// Glides, pops, swing and flicks. Off for anyone who prefers a still board.
     pub animations: bool,
+    /// The overview of the board in the corner while part of it is off screen.
+    pub minimap: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { animations: true }
+        Self {
+            animations: true,
+            minimap: true,
+        }
     }
 }
 

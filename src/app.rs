@@ -19,6 +19,7 @@ use crate::library::{self, Tone};
 
 mod draw;
 mod focus;
+mod minimap;
 mod motion;
 mod organize;
 mod slots;
@@ -123,6 +124,8 @@ type Found = (
     Result<(library::Signature, Vec<library::Match>), String>,
 );
 type Thumb = (std::path::PathBuf, Result<ColorImage, String>);
+/// (board generation, where to put it in world space, the link, the downloaded picture)
+type Fetched = (u64, Pos2, String, Result<Vec<u8>, String>);
 
 /// Whether `pos` is over a window or popup rather than the board itself.
 fn over_ui(ctx: &egui::Context, pos: Pos2) -> bool {
@@ -188,6 +191,7 @@ pub struct CoreBoardApp {
     board_values: u8,
     motion: motion::Motion,
     animations: bool,
+    minimap: bool,
     /// The image open in focus view.
     focus: Option<focus::Focus>,
     /// The note or frame whose text is being edited.
@@ -219,6 +223,10 @@ pub struct CoreBoardApp {
     thumbs: HashMap<std::path::PathBuf, Texture>,
     thumb_tx: Sender<Thumb>,
     thumb_rx: Receiver<Thumb>,
+    fetch_tx: Sender<Fetched>,
+    fetch_rx: Receiver<Fetched>,
+    /// Web links being downloaded.
+    fetching: usize,
     show_tags: bool,
     tags_focus_pending: bool,
     new_tag: String,
@@ -243,6 +251,7 @@ impl CoreBoardApp {
         let (palette_tx, palette_rx) = channel();
         let (find_tx, find_rx) = channel();
         let (thumb_tx, thumb_rx) = channel();
+        let (fetch_tx, fetch_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty();
         Self {
@@ -267,6 +276,7 @@ impl CoreBoardApp {
             board_values: 0,
             motion: motion::Motion::default(),
             animations: boards::settings().animations,
+            minimap: boards::settings().minimap,
             focus: None,
             editing: None,
             edit_original: None,
@@ -290,6 +300,9 @@ impl CoreBoardApp {
             thumbs: HashMap::new(),
             thumb_tx,
             thumb_rx,
+            fetch_tx,
+            fetch_rx,
+            fetching: 0,
             show_tags: false,
             tags_focus_pending: false,
             new_tag: String::new(),
@@ -1311,6 +1324,11 @@ impl CoreBoardApp {
         }
         // Copying files in a file manager usually puts their paths/URIs on the clipboard as text.
         let text = pasted_text.or_else(|| self.clipboard.as_mut()?.get_text().ok());
+        // A web link (copied image address or page): download it in the background.
+        if let Some(url) = text.as_deref().and_then(crate::web::link) {
+            self.fetch_link(canvas, at, url);
+            return;
+        }
         let paths: Vec<_> = text
             .iter()
             .flat_map(|t| t.lines())
@@ -1328,6 +1346,41 @@ impl CoreBoardApp {
             .filter_map(|p| Some((std::fs::read(p).ok()?, Some(p.as_path()))))
             .collect();
         self.import_all(canvas, at, sources);
+    }
+
+    fn fetch_link(&mut self, canvas: Rect, at: Pos2, url: String) {
+        let tx = self.fetch_tx.clone();
+        let generation = self.generation;
+        let world = self.to_world(canvas, at);
+        self.fetching += 1;
+        self.toast("Downloading picture…".into());
+        std::thread::spawn(move || {
+            let result = crate::web::fetch_image(&url);
+            let _ = tx.send((generation, world, url, result));
+        });
+    }
+
+    /// Puts downloaded pictures where the link was pasted.
+    fn receive_fetches(&mut self, ctx: &egui::Context, canvas: Rect) {
+        if self.fetching > 0 {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        while let Ok((generation, world, url, result)) = self.fetch_rx.try_recv() {
+            self.fetching = self.fetching.saturating_sub(1);
+            if generation != self.generation {
+                continue;
+            }
+            match result {
+                Ok(bytes) => {
+                    let at = self.to_screen(canvas, world);
+                    self.import_all(canvas, at, vec![(bytes, None)]);
+                }
+                Err(err) => {
+                    eprintln!("coreboard: {url}: {err}");
+                    self.toast(format!("Couldn't get that picture: {err}"));
+                }
+            }
+        }
     }
 
     fn toast(&mut self, msg: String) {
@@ -1977,17 +2030,25 @@ impl CoreBoardApp {
                 ui.separator();
                 self.watch_controls(ui);
                 ui.separator();
-                if ui
+                let animations = ui
                     .checkbox(&mut self.animations, "Animations")
                     .on_hover_text("Glides, pops, swing and flicks. Turn off for a still board.")
-                    .changed()
-                {
+                    .changed();
+                let minimap = ui
+                    .checkbox(&mut self.minimap, "Mini-map")
+                    .on_hover_text(
+                        "An overview of the whole board in the corner, while part of it is off \
+                         screen. Click or drag in it to go there.",
+                    )
+                    .changed();
+                if animations || minimap {
                     boards::save_settings(&boards::Settings {
                         animations: self.animations,
+                        minimap: self.minimap,
                     });
-                    if !self.animations {
-                        self.reset_motion();
-                    }
+                }
+                if animations && !self.animations {
+                    self.reset_motion();
                 }
                 ui.add_space(6.0);
                 close |= ui.button("Close").clicked();
@@ -2163,6 +2224,7 @@ impl CoreBoardApp {
                     Key::X if !m.command && m.shift => self.reset_crop(canvas),
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
+                    Key::S if !m.command && !m.shift => self.surprise(&ctx),
                     Key::Enter if !m.command && self.editing.is_none() => {
                         self.open_focus(canvas, hover);
                     }
@@ -2846,6 +2908,8 @@ impl CoreBoardApp {
                         Del                    remove\n\
                         Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
                         Enter                  focus view: image big, ← → step through\n\
+                        S                      surprise me: a random image from any board\n\
+                        Ctrl+V a web link      download the picture (or the page's picture)\n\
                         F                      fit to view\n\
                         1                      zoom 100%\n\
                         H                      toggle this help";
@@ -2892,6 +2956,7 @@ impl CoreBoardApp {
         self.tags_window(ctx);
         self.align_toolbar(ctx, canvas);
         self.paint_radial(ctx);
+        self.minimap(ctx, canvas);
     }
 }
 
@@ -2935,6 +3000,7 @@ impl eframe::App for CoreBoardApp {
         self.boards_window(&ctx);
         self.receive_finds();
         self.receive_thumbs(&ctx);
+        self.receive_fetches(&ctx, canvas);
         self.receive_exports();
         self.receive_palettes();
         self.poll_watch(&ctx);

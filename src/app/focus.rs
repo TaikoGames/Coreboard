@@ -50,6 +50,14 @@ fn reading_order(items: &[Item]) -> Vec<u64> {
         .collect()
 }
 
+/// A random number below `n` (n > 0), good enough for picking a picture.
+fn random_below(n: usize) -> usize {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(Instant::now().elapsed().as_nanos());
+    (hasher.finish() % n as u64) as usize
+}
+
 /// The biggest rect of the image's shape that fits in `area`, centered.
 fn fit_into(area: Rect, size: [f32; 2]) -> Rect {
     let [w, h] = [size[0].max(1.0), size[1].max(1.0)];
@@ -80,6 +88,11 @@ impl CoreBoardApp {
             self.toast("No images to focus on".into());
             return;
         };
+        self.open_focus_on(id);
+    }
+
+    /// Opens focus view on image `id` of this board.
+    fn open_focus_on(&mut self, id: u64) {
         self.radial = None;
         self.search = None;
         self.selection = HashSet::from([id]);
@@ -98,6 +111,60 @@ impl CoreBoardApp {
             closing: false,
             switched: opened,
         });
+    }
+
+    /// Surprise me: focus view on a random image from this board or any recent one. A pick from
+    /// another board opens that board.
+    pub(super) fn surprise(&mut self, ctx: &egui::Context) {
+        let here = self
+            .store
+            .dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.store.dir.clone());
+        let showing = self.focus.as_ref().map(|f| f.id);
+        let mut picks: Vec<(Option<std::path::PathBuf>, u64)> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| i.is_image() && Some(i.id) != showing)
+            .map(|i| (None, i.id))
+            .collect();
+        for dir in boards::recent() {
+            if dir.canonicalize().unwrap_or_else(|_| dir.clone()) == here {
+                continue;
+            }
+            let Some(board) = std::fs::read(dir.join("board.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Board>(&b).ok())
+            else {
+                continue;
+            };
+            picks.extend(
+                board
+                    .items
+                    .iter()
+                    .filter(|i| i.is_image())
+                    .map(|i| (Some(dir.clone()), i.id)),
+            );
+        }
+        if picks.is_empty() {
+            self.toast("Add some images first, then press S for a surprise".into());
+            return;
+        }
+        let (dir, id) = picks.swap_remove(random_below(picks.len()));
+        if let Some(dir) = dir {
+            let name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.switch_board(ctx, dir);
+            if !self.board.items.iter().any(|i| i.id == id) {
+                // The switch didn't go through (the board couldn't be opened).
+                return;
+            }
+            self.toast(format!("Surprise! From \u{201c}{name}\u{201d}"));
+        }
+        self.open_focus_on(id);
     }
 
     /// Starts shrinking back into the board (or closes at once, with animations off).
@@ -194,6 +261,7 @@ impl CoreBoardApp {
             };
             match key {
                 Key::Escape | Key::Enter | Key::Space => self.close_focus(),
+                Key::S if !m.command && !m.shift => self.surprise(ctx),
                 Key::ArrowRight | Key::ArrowDown | Key::PageDown => self.step_focus(true),
                 Key::ArrowLeft | Key::ArrowUp | Key::PageUp => self.step_focus(false),
                 Key::F | Key::Home | Key::Num0 => {
@@ -384,7 +452,7 @@ impl CoreBoardApp {
             painter.text(
                 canvas.right_bottom() + vec2(-16.0, -12.0),
                 Align2::RIGHT_BOTTOM,
-                "← → step   scroll zoom   drag pan   V C B M R study   Esc back",
+                "← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back",
                 FontId::proportional(12.0),
                 Color32::from_gray(110).gamma_multiply(alpha),
             );
