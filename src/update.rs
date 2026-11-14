@@ -90,19 +90,37 @@ pub fn download_installer(latest: &Latest) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Starts the installer. It shows only a progress bar, closes this app, installs over it and
-/// opens the new version. The caller should save and quit right after.
+/// Starts the installer. It shows only a progress bar, moves this running copy aside, installs
+/// the new one and opens it. The caller should save and quit right after.
 pub fn run_installer(path: &PathBuf) -> Result<(), String> {
     std::process::Command::new(path)
-        .args([
-            "/SILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/CLOSEAPPLICATIONS",
-        ])
+        .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("couldn't start the installer: {err}"))
+}
+
+/// Deletes copies of the app that an update moved aside while they were running (Windows).
+pub fn remove_old_copies() {
+    if !cfg!(windows) {
+        return;
+    }
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if name.starts_with("coreboard.old") && name.ends_with(".exe") {
+            // Still running somewhere? Then it goes next time.
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]

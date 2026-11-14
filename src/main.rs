@@ -13,6 +13,7 @@ mod web;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
+    update::remove_old_copies();
     // A folder given on the command line, else the board used last, else the default one.
     let dir = std::env::args_os()
         .nth(1)

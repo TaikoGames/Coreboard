@@ -60,7 +60,12 @@ jobs:
           # Same arguments as update::run_installer in src/update.rs.
           $setup = (Resolve-Path dist\CoreBoard-Setup-9.9.9.exe).Path
           $started = Get-Date
-          Start-Process $setup -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS" -Wait
+          $installer = Start-Process $setup -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+          # The app saves and closes itself right after starting the installer.
+          Start-Sleep 1
+          if ($env:OLD_PID) { Get-Process -Id $env:OLD_PID -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null } }
+          $installer.WaitForExit()
+          Write-Host "Installer exit code: $($installer.ExitCode)"
           Start-Sleep 8
           $dir = Join-Path $env:LOCALAPPDATA "Programs\Core Board"
           $installed = (Get-FileHash "$dir\coreboard.exe").Hash
@@ -71,6 +76,7 @@ jobs:
             Where-Object DisplayName -eq "Core Board").DisplayVersion
           Write-Host "Registered version: $version"
           if ($version -ne "9.9.9") { throw "Windows still lists version $version" }
+          Get-ChildItem $dir | Format-Table Name, Length, LastWriteTime
           $running = Get-Process coreboard -ErrorAction SilentlyContinue
           $running | Format-Table Id, Path, StartTime
           if ($env:OLD_PID -and ($running | Where-Object Id -eq $env:OLD_PID)) { throw "the old version is still running" }
@@ -80,4 +86,24 @@ jobs:
           } else {
             Write-Host "Core Board reopened after the update (pid $($new.Id))."
           }
+          Get-Process coreboard -ErrorAction SilentlyContinue | Stop-Process -Force
+      - name: Update while Core Board stays open
+        shell: pwsh
+        run: |
+          # Even if the old copy doesn't close in time, the update must go through.
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\Core Board\coreboard.exe"
+          $p = Start-Process $exe -PassThru
+          Start-Sleep 6
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=9.9.10" installer\coreboard.iss | Out-Null
+          if ($p.HasExited) { Write-Host "::warning::Core Board exited by itself; this step can't test an open copy." }
+          $before = Get-Date
+          Start-Process dist\CoreBoard-Setup-9.9.10.exe -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $dir = Join-Path $env:LOCALAPPDATA "Programs\Core Board"
+          Get-ChildItem $dir | Format-Table Name, Length, LastWriteTime
+          $version = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+            Where-Object DisplayName -eq "Core Board").DisplayVersion
+          if ($version -ne "9.9.10") { throw "Windows still lists version $version" }
+          if ((Get-Item "$dir\coreboard.exe").LastWriteTime -lt $before.AddSeconds(-5) -and (Get-Item "$dir\coreboard.exe").CreationTime -lt $before) { throw "app not replaced" }
+          if (-not $p.HasExited -and -not (Get-ChildItem "$dir\coreboard.old*.exe")) { throw "the open copy wasn't moved aside" }
+          Write-Host "Updated to 9.9.10 with the old copy still open."
           Get-Process coreboard -ErrorAction SilentlyContinue | Stop-Process -Force
