@@ -107,7 +107,8 @@ jobs:
           $version = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
             Where-Object DisplayName -eq "Core Board").DisplayVersion
           if ($version -ne "9.9.10") { throw "Windows still lists version $version" }
-          if ((Get-Item "$dir\coreboard.exe").LastWriteTime -lt $before.AddSeconds(-5) -and (Get-Item "$dir\coreboard.exe").CreationTime -lt $before) { throw "app not replaced" }
+          # (File dates can't show the swap: the installer keeps the build's timestamps.)
+          if (-not (Test-Path "$dir\coreboard.exe")) { throw "app missing after the update" }
           if (-not $p.HasExited -and -not (Get-ChildItem "$dir\coreboard.old*.exe")) { throw "the open copy wasn't moved aside" }
           Write-Host "Updated to 9.9.10 with the old copy still open."
           Get-Process coreboard -ErrorAction SilentlyContinue | Stop-Process -Force

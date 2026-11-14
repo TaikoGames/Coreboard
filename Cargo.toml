@@ -1,6 +1,6 @@
 [package]
 name = "coreboard"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 description = "A reference board for images: drop, arrange, study and export."
 authors = ["TaikoGames"]

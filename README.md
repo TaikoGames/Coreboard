@@ -198,6 +198,18 @@ fling it while panning, coasts to a stop. Grab anything to stop it.
 
 Prefer a still board? Untick **Animations** in the Boards window (**Ctrl+O**); it's remembered.
 
+## Updates
+
+Core Board checks mikibutler.ca for a newer version when it starts (one small request; nothing
+about you or your boards is sent). When there is one, a banner shows what's new:
+
+- **Windows** (installed with the installer): **Update now** downloads the new version, installs it
+  and reopens Core Board. Your boards are saved first.
+- **macOS, Linux and the portable zip**: **Download** opens the download page.
+
+The Boards window (**Ctrl+O**) has **Check for updates**, a **Download page** button and the option
+to turn the startup check off.
+
 ## Paste a web link
 
 Copy a picture's web address (right-click > *Copy image address* in the browser) and press **Ctrl+V**
