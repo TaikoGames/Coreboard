@@ -16,6 +16,7 @@ permissions:
 jobs:
   update:
     runs-on: windows-latest
+    timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -97,7 +98,10 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=9.9.10" installer\coreboard.iss | Out-Null
           if ($p.HasExited) { Write-Host "::warning::Core Board exited by itself; this step can't test an open copy." }
           $before = Get-Date
-          Start-Process dist\CoreBoard-Setup-9.9.10.exe -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          # Wait for the installer only: -Wait would also wait for the Core Board it reopens.
+          $installer = Start-Process dist\CoreBoard-Setup-9.9.10.exe -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+          $installer.WaitForExit()
+          Write-Host "Installer exit code: $($installer.ExitCode)"
           $dir = Join-Path $env:LOCALAPPDATA "Programs\Core Board"
           Get-ChildItem $dir | Format-Table Name, Length, LastWriteTime
           $version = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
