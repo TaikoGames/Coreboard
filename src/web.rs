@@ -34,25 +34,95 @@ pub fn agent() -> ureq::Agent {
         .new_agent()
 }
 
+/// What a pasted link turned out to be.
+pub enum Fetched {
+    /// A picture (the link itself, or the main picture of the page).
+    Image(Vec<u8>),
+    /// Something without a picture to show (a page, a PDF, a video): it goes on the board as a
+    /// link card, with the page's title when there is one.
+    Page { title: Option<String> },
+}
+
 /// Downloads the picture behind `url`: the picture itself, or the main picture of a page.
-pub fn fetch_image(url: &str) -> Result<Vec<u8>, String> {
+pub fn fetch_image(url: &str) -> Result<Fetched, String> {
     let agent = agent();
     let (bytes, kind) = get(&agent, url, MAX_IMAGE)?;
     if is_image(&bytes) {
-        return Ok(bytes);
+        return Ok(Fetched::Image(bytes));
     }
     if !kind.contains("html") && !looks_like_html(&bytes) {
-        return Err("that link isn't a picture".into());
+        return Ok(Fetched::Page { title: None });
     }
     let page = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_PAGE as usize)]);
-    let found = page_image(&page).ok_or("no picture found on that page")?;
+    let title = html_title(&page);
+    let Some(found) = page_image(&page) else {
+        return Ok(Fetched::Page { title });
+    };
     let target = resolve(url, &found);
-    let (bytes, _) = get(&agent, &target, MAX_IMAGE)?;
-    if is_image(&bytes) {
-        Ok(bytes)
-    } else {
-        Err("that page's picture couldn't be read".into())
+    match get(&agent, &target, MAX_IMAGE) {
+        Ok((bytes, _)) if is_image(&bytes) => Ok(Fetched::Image(bytes)),
+        _ => Ok(Fetched::Page { title }),
     }
+}
+
+/// The title of the page at `url`, for a link card.
+pub fn page_title(url: &str) -> Option<String> {
+    let (bytes, kind) = get(&agent(), url, MAX_PAGE).ok()?;
+    if !kind.contains("html") && !looks_like_html(&bytes) {
+        return None;
+    }
+    html_title(&String::from_utf8_lossy(&bytes))
+}
+
+/// A page's title: the one link previews use (og:title), else its `<title>`.
+fn html_title(html: &str) -> Option<String> {
+    let og = html
+        .split('<')
+        .filter(|t| t.get(..4).is_some_and(|t| t.eq_ignore_ascii_case("meta")))
+        .map(|t| t.split('>').next().unwrap_or(t))
+        .find(|tag| {
+            ["property", "name"]
+                .iter()
+                .any(|key| attr(tag, key).is_some_and(|v| v.eq_ignore_ascii_case("og:title")))
+        })
+        .and_then(|tag| attr(tag, "content"));
+    let title = og.or_else(|| {
+        let lower = html.to_ascii_lowercase();
+        let start = lower.find("<title")?;
+        let open = start + lower[start..].find('>')? + 1;
+        let close = open + lower[open..].find("</title")?;
+        Some(html[open..close].to_string())
+    })?;
+    let title = unescape(&title)
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!title.is_empty()).then(|| title.chars().take(120).collect())
+}
+
+/// Turns what someone typed into a web address: adds https:// to "example.com/page".
+pub fn normalize_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() || text.contains(char::is_whitespace) {
+        return None;
+    }
+    if let Some(url) = link(text) {
+        return Some(url);
+    }
+    let host = text.split(['/', '?', '#']).next().unwrap_or("");
+    (host.contains('.') && !host.starts_with('.') && !host.ends_with('.'))
+        .then(|| format!("https://{text}"))
+}
+
+/// The site's name for a card: "www.artstation.com/x" -> "artstation.com".
+pub fn domain(url: &str) -> String {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    host.trim_start_matches("www.").to_string()
 }
 
 pub fn get(agent: &ureq::Agent, url: &str, limit: u64) -> Result<(Vec<u8>, String), String> {
@@ -208,6 +278,35 @@ mod tests {
         let html = r#"<meta name=twitter:image content=/pics/a.png>"#;
         assert_eq!(page_image(html).as_deref(), Some("/pics/a.png"));
         assert_eq!(page_image("<p>no pictures</p>"), None);
+    }
+
+    #[test]
+    fn reads_page_titles() {
+        let html = r#"<head><title>  Moss &amp; Stone
+            | Gallery </title><meta property="og:title" content="Moss study"></head>"#;
+        assert_eq!(html_title(html).as_deref(), Some("Moss study"));
+        let html = "<html><TITLE>Rock &amp; Roll</TITLE></html>";
+        assert_eq!(html_title(html).as_deref(), Some("Rock & Roll"));
+        assert_eq!(html_title("<p>none</p>"), None);
+    }
+
+    #[test]
+    fn turns_typing_into_links() {
+        assert_eq!(
+            normalize_link("artstation.com/x").as_deref(),
+            Some("https://artstation.com/x")
+        );
+        assert_eq!(
+            normalize_link(" https://a.org ").as_deref(),
+            Some("https://a.org")
+        );
+        assert_eq!(normalize_link("hello"), None);
+        assert_eq!(normalize_link("two words.com"), None);
+        assert_eq!(
+            domain("https://www.artstation.com/artwork/1"),
+            "artstation.com"
+        );
+        assert_eq!(domain("http://localhost:8000/a"), "localhost:8000");
     }
 
     #[test]

@@ -99,6 +99,12 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 draw_placeholder(&mut canvas, &font, (x, y, w, h), label, scale);
                 continue;
             }
+            Kind::File { .. } | Kind::Link { .. } => {
+                if let Some(face) = item.kind.card_face() {
+                    draw_card(&mut canvas, &font, (x, y, w, h), &face);
+                }
+                continue;
+            }
         }
         let path = images_dir.join(&item.file);
         let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
@@ -284,6 +290,63 @@ fn draw_placeholder(
 }
 
 /// Greedy word wrap into lines no wider than `max_width` (a single long word may overflow).
+/// A file or link card, laid out like on the board.
+fn draw_card(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    face: &crate::board::CardFace,
+) {
+    use crate::board::{CARD_SIZE, CARD_SUB_FONT, CARD_TITLE_FONT};
+    let s = h as f32 / CARD_SIZE[1];
+    fill_rect(canvas, (x, y, w, h), [38, 40, 45]);
+    let pad = 12.0 * s;
+    let side = (h as f32 - 2.0 * pad).max(1.0);
+    let tile = (
+        x + pad as i64,
+        y + pad as i64,
+        (side * 0.86) as u32,
+        side as u32,
+    );
+    fill_rect(canvas, tile, face.color);
+    let badge_px =
+        (tile.2 as f32 / (face.badge.chars().count().max(2) as f32 * 0.68)).min(15.0 * s);
+    let badge = Line::layout(font, &face.badge, badge_px);
+    badge.draw(
+        font,
+        canvas,
+        tile.0 as f32 + (tile.2 as f32 - badge.width) / 2.0,
+        tile.1 as f32 + (tile.3 as f32 - badge.height) / 2.0,
+        [255, 255, 255],
+        1.0,
+    );
+    let left = tile.0 as f32 + tile.2 as f32 + pad;
+    let room = (x + w as i64) as f32 - pad - left;
+    let fit = |text: &str, px: f32| {
+        // Drop characters until it fits, ending with an ellipsis.
+        let mut text = text.to_string();
+        let mut line = Line::layout(font, &text, px);
+        while line.width > room && text.chars().count() > 1 {
+            text.pop();
+            line = Line::layout(font, &format!("{}…", text.trim_end()), px);
+        }
+        line
+    };
+    let title = fit(&face.title, CARD_TITLE_FONT * s);
+    let sub = fit(&face.subtitle, CARD_SUB_FONT * s);
+    let total = title.height + 3.0 * s + sub.height;
+    let top = y as f32 + (h as f32 - total) / 2.0;
+    title.draw(font, canvas, left, top, [238, 238, 238], 1.0);
+    sub.draw(
+        font,
+        canvas,
+        left,
+        top + title.height + 3.0 * s,
+        [150, 150, 150],
+        1.0,
+    );
+}
+
 fn wrap(font: &FontRef<'_>, text: &str, px: f32, max_width: f32) -> Vec<String> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
@@ -540,4 +603,44 @@ fn timestamp() -> String {
         rem % 3600 / 60,
         rem % 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::board::{CARD_SIZE, Kind};
+
+    #[test]
+    fn exports_file_and_link_cards() {
+        let card = |id, y, kind| Item {
+            id,
+            kind,
+            pos: [0.0, y],
+            size: CARD_SIZE,
+            ..Item::default()
+        };
+        let items = vec![
+            card(
+                1,
+                0.0,
+                Kind::File {
+                    path: "/work/ABCK_2024.ai".into(),
+                    folder: false,
+                },
+            ),
+            card(
+                2,
+                100.0,
+                Kind::Link {
+                    url: "https://www.artstation.com/x".into(),
+                    title: "Moss study".into(),
+                },
+            ),
+        ];
+        let image = render(Path::new("/nonexistent"), &items, &Watermark::default()).unwrap();
+        // The orange Illustrator badge is drawn on the first card.
+        let orange = image.pixels().any(|p| p.0[..3] == [255, 154, 0]);
+        let green = image.pixels().any(|p| p.0[..3] == [72, 196, 120]);
+        assert!(orange && green);
+    }
 }

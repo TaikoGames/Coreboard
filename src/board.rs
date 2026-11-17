@@ -169,6 +169,116 @@ pub enum Kind {
     Frame { title: String },
     /// An empty, labeled slot for an image still to find; dropping one on it fills it.
     Placeholder { label: String },
+    /// A file that isn't a picture (an Illustrator file, a video, an app shortcut, a folder),
+    /// shown as a card. Double-click opens it with its usual app. The file stays where it is:
+    /// the card is a shortcut to it.
+    File {
+        path: String,
+        #[serde(default)]
+        folder: bool,
+    },
+    /// A web page, shown as a card. Double-click opens it in the browser.
+    Link {
+        url: String,
+        #[serde(default)]
+        title: String,
+    },
+}
+
+/// A file or link card's size in world units.
+pub const CARD_SIZE: [f32; 2] = [300.0, 76.0];
+pub const CARD_TITLE_FONT: f32 = 17.0;
+pub const CARD_SUB_FONT: f32 = 12.5;
+
+/// What a file or link card shows: title, the line under it, and the badge's text and color.
+pub struct CardFace {
+    pub title: String,
+    pub subtitle: String,
+    pub badge: String,
+    pub color: [u8; 3],
+}
+
+impl Kind {
+    pub fn card_face(&self) -> Option<CardFace> {
+        match self {
+            Kind::File { path, folder } => {
+                let p = Path::new(path);
+                let ext = p
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
+                let stem = p
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| name.clone());
+                let (title, subtitle, badge, color) = if *folder {
+                    (
+                        name,
+                        "Folder".to_string(),
+                        "DIR".to_string(),
+                        [222, 182, 68],
+                    )
+                } else {
+                    let color = match ext.as_str() {
+                        "ai" | "eps" | "svg" => [255, 154, 0],
+                        "psd" | "psb" => [49, 168, 255],
+                        "blend" => [234, 118, 0],
+                        "kra" | "clip" | "procreate" | "xcf" => [92, 160, 255],
+                        "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "wmv" => [150, 96, 232],
+                        "mp3" | "wav" | "ogg" | "flac" | "m4a" => [232, 96, 160],
+                        "pdf" => [228, 64, 52],
+                        "fbx" | "obj" | "glb" | "gltf" | "max" | "ma" | "mb" | "spp" | "sbsar"
+                        | "ztl" | "zpr" | "usd" | "usdz" | "abc" | "stl" => [36, 178, 160],
+                        "zip" | "rar" | "7z" | "tar" | "gz" => [168, 136, 92],
+                        "doc" | "docx" | "txt" | "md" | "rtf" | "odt" | "pages" => [84, 140, 232],
+                        "lnk" | "exe" | "app" | "url" | "desktop" => [112, 132, 168],
+                        _ => [124, 124, 134],
+                    };
+                    let shortcut = matches!(ext.as_str(), "lnk" | "url" | "desktop" | "app");
+                    let title = if shortcut { stem } else { name };
+                    let subtitle = match ext.as_str() {
+                        "lnk" | "url" | "desktop" => "Shortcut".to_string(),
+                        "exe" | "app" => "App".to_string(),
+                        _ => p
+                            .parent()
+                            .and_then(|d| d.file_name())
+                            .map(|d| d.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    };
+                    let badge = if ext.is_empty() {
+                        "FILE".to_string()
+                    } else {
+                        ext.to_uppercase().chars().take(5).collect()
+                    };
+                    (title, subtitle, badge, color)
+                };
+                Some(CardFace {
+                    title,
+                    subtitle,
+                    badge,
+                    color,
+                })
+            }
+            Kind::Link { url, title } => {
+                let domain = crate::web::domain(url);
+                Some(CardFace {
+                    title: if title.trim().is_empty() {
+                        domain.clone()
+                    } else {
+                        title.trim().to_string()
+                    },
+                    subtitle: domain,
+                    badge: "WEB".to_string(),
+                    color: [72, 196, 120],
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Note backgrounds and their text colors.
@@ -224,6 +334,11 @@ impl Item {
         self.kind == Kind::Image
     }
 
+    /// A file or link card.
+    pub fn is_card(&self) -> bool {
+        matches!(self.kind, Kind::File { .. } | Kind::Link { .. })
+    }
+
     pub fn is_frame(&self) -> bool {
         matches!(self.kind, Kind::Frame { .. })
     }
@@ -241,6 +356,8 @@ impl Item {
             Kind::Note { text, .. } => text.to_lowercase(),
             Kind::Frame { title } => title.to_lowercase(),
             Kind::Placeholder { label } => label.to_lowercase(),
+            Kind::File { path, .. } => path.to_lowercase(),
+            Kind::Link { url, title } => format!("{title} {url}").to_lowercase(),
             _ => self.caption.to_lowercase(),
         };
         query.split_whitespace().all(|word| {
@@ -549,31 +666,51 @@ pub struct WatchFolder {
 
 pub struct Store {
     pub dir: PathBuf,
+    /// Set when board.json exists but couldn't be read (made by a newer Core Board, or
+    /// damaged). Then nothing is saved over it and no images are cleaned up, so opening it in
+    /// an older version can never wipe it.
+    pub unreadable: Option<String>,
 }
 
 impl Store {
     pub fn open(dir: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(dir.join("images"))?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            unreadable: None,
+        })
     }
 
     pub fn image_path(&self, file: &str) -> PathBuf {
         self.dir.join("images").join(file)
     }
 
-    pub fn load(&self) -> Board {
+    pub fn load(&mut self) -> Board {
+        self.unreadable = None;
         let path = self.dir.join("board.json");
-        match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+        let Ok(bytes) = fs::read(&path) else {
+            return Board::default();
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(board) => board,
+            Err(err) => {
                 eprintln!("coreboard: could not parse {}: {err}", path.display());
+                // Keep a copy too, in case something else touches the file later.
+                let backup = self.dir.join("board.json.unreadable-backup");
+                if !backup.exists() {
+                    let _ = fs::write(&backup, &bytes);
+                }
+                self.unreadable = Some(err.to_string());
                 Board::default()
-            }),
-            Err(_) => Board::default(),
+            }
         }
     }
 
     /// Writes atomically so a crash mid-save never leaves a truncated board.
     pub fn save(&self, board: &Board) -> io::Result<()> {
+        if self.unreadable.is_some() {
+            return Ok(());
+        }
         let json = serde_json::to_vec_pretty(board).map_err(io::Error::other)?;
         let tmp = self.dir.join("board.json.tmp");
         fs::write(&tmp, json)?;
@@ -592,6 +729,10 @@ impl Store {
 
     /// Deletes image files no item refers to anymore.
     pub fn collect_garbage(&self, board: &Board) {
+        // An unreadable board's items aren't known: every image would look unused.
+        if self.unreadable.is_some() {
+            return;
+        }
         let Ok(entries) = fs::read_dir(self.dir.join("images")) else {
             return;
         };
@@ -634,6 +775,28 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn never_overwrites_a_board_it_cannot_read() {
+        let dir = std::env::temp_dir().join(format!("coreboard-unreadable-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut store = Store::open(dir.clone()).unwrap();
+        // A board from a future version, with a kind of item this one doesn't know.
+        let future = br#"{"items":[{"id":1,"kind":{"type":"Hologram"},"file":"a.png","pos":[0,0],"size":[10,10]}]}"#;
+        fs::write(dir.join("board.json"), future).unwrap();
+        fs::write(store.image_path("a.png"), b"picture").unwrap();
+        let board = store.load();
+        assert!(store.unreadable.is_some());
+        store.save(&board).unwrap();
+        store.collect_garbage(&board);
+        assert_eq!(fs::read(dir.join("board.json")).unwrap(), future);
+        assert!(store.image_path("a.png").exists());
+        assert_eq!(
+            fs::read(dir.join("board.json.unreadable-backup")).unwrap(),
+            future
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn close(a: [f32; 4], b: [f32; 4]) -> bool {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5)

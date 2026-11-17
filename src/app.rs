@@ -17,6 +17,7 @@ use crate::export;
 use crate::filters::{self, Filter};
 use crate::library::{self, Tone};
 
+mod cards;
 mod draw;
 mod focus;
 mod minimap;
@@ -25,6 +26,7 @@ mod organize;
 mod slots;
 mod updates;
 mod watch;
+use cards::draw_card;
 use draw::{item_mark_shapes, preview_mark};
 use organize::Align;
 use slots::{draw_placeholder, placeholder_label_rect};
@@ -126,7 +128,7 @@ type Found = (
 );
 type Thumb = (std::path::PathBuf, Result<ColorImage, String>);
 /// (board generation, where to put it in world space, the link, the downloaded picture)
-type Fetched = (u64, Pos2, String, Result<Vec<u8>, String>);
+type Fetched = (u64, Pos2, String, Result<crate::web::Fetched, String>);
 
 /// Whether `pos` is over a window or popup rather than the board itself.
 fn over_ui(ctx: &egui::Context, pos: Pos2) -> bool {
@@ -228,6 +230,10 @@ pub struct CoreBoardApp {
     thumb_rx: Receiver<Thumb>,
     fetch_tx: Sender<Fetched>,
     fetch_rx: Receiver<Fetched>,
+    title_tx: Sender<cards::Titled>,
+    title_rx: Receiver<cards::Titled>,
+    /// The "add a link" box (Ctrl+click on an empty spot).
+    link_prompt: Option<cards::LinkPrompt>,
     /// Web links being downloaded.
     fetching: usize,
     show_tags: bool,
@@ -248,15 +254,16 @@ pub struct CoreBoardApp {
 }
 
 impl CoreBoardApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, store: Store) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, mut store: Store) -> Self {
         let (decoded_tx, decoded_rx) = channel();
         let (exported_tx, exported_rx) = channel();
         let (palette_tx, palette_rx) = channel();
         let (find_tx, find_rx) = channel();
         let (thumb_tx, thumb_rx) = channel();
         let (fetch_tx, fetch_rx) = channel();
+        let (title_tx, title_rx) = channel();
         let board = store.load();
-        let show_help = board.items.is_empty();
+        let show_help = board.items.is_empty() && store.unreadable.is_none();
         Self {
             store,
             board,
@@ -307,6 +314,9 @@ impl CoreBoardApp {
             thumb_rx,
             fetch_tx,
             fetch_rx,
+            title_tx,
+            title_rx,
+            link_prompt: None,
             fetching: 0,
             show_tags: false,
             tags_focus_pending: false,
@@ -565,7 +575,11 @@ impl CoreBoardApp {
                     .find(|(r, _)| r.contains(pos))
                     .map(|(_, &c)| c);
             }
-            Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. } => return None,
+            Kind::Note { .. }
+            | Kind::Frame { .. }
+            | Kind::Placeholder { .. }
+            | Kind::File { .. }
+            | Kind::Link { .. } => return None,
         }
         let sample = self.samples.get(&item.file)?;
         let s = (pos - rect.min) / rect.size();
@@ -1246,16 +1260,18 @@ impl CoreBoardApp {
         }
         let mut added = 0;
         let mut failed = 0;
+        let mut unreadable = Vec::new();
         let mut cursor = self.to_world(canvas, at);
         let max_screen_side = canvas.width().min(canvas.height()) * 0.5;
 
         for (bytes, path) in sources {
-            let Some(ext) = board::image_ext(&bytes, path) else {
-                failed += 1;
-                continue;
-            };
-            let Ok((w, h)) = image_dimensions(&bytes) else {
-                failed += 1;
+            let decoded = board::image_ext(&bytes, path).zip(image_dimensions(&bytes).ok());
+            let Some((ext, (w, h))) = decoded else {
+                // A file it can't show as a picture still goes on the board, as a card.
+                match path {
+                    Some(path) => unreadable.push(path.to_path_buf()),
+                    None => failed += 1,
+                }
                 continue;
             };
             let file = match self.store.import(&bytes, &ext) {
@@ -1293,8 +1309,12 @@ impl CoreBoardApp {
         if added > 0 {
             self.touch();
         }
+        if !unreadable.is_empty() {
+            let at = self.to_screen(canvas, cursor);
+            self.add_file_cards(canvas, at, unreadable);
+        }
         if failed > 0 {
-            self.toast(format!("{failed} file(s) were not images I can read"));
+            self.toast("That isn't a picture I can read".into());
         }
     }
 
@@ -1340,17 +1360,20 @@ impl CoreBoardApp {
             .map(|l| l.trim().trim_start_matches("file://"))
             .filter(|l| !l.is_empty())
             .map(std::path::PathBuf::from)
-            .filter(|p| p.is_file())
+            .filter(|p| p.exists())
             .collect();
         if paths.is_empty() {
             self.toast("Clipboard has no image".into());
             return;
         }
-        let sources = paths
+        let (pictures, others): (Vec<_>, Vec<_>) =
+            paths.into_iter().partition(|p| looks_like_picture(p));
+        let sources = pictures
             .iter()
             .filter_map(|p| Some((std::fs::read(p).ok()?, Some(p.as_path()))))
             .collect();
         self.import_all(canvas, at, sources);
+        self.add_file_cards(canvas, at + vec2(0.0, 40.0), others);
     }
 
     fn fetch_link(&mut self, canvas: Rect, at: Pos2, url: String) {
@@ -1375,10 +1398,14 @@ impl CoreBoardApp {
             if generation != self.generation {
                 continue;
             }
+            let at = self.to_screen(canvas, world);
             match result {
-                Ok(bytes) => {
-                    let at = self.to_screen(canvas, world);
+                Ok(crate::web::Fetched::Image(bytes)) => {
                     self.import_all(canvas, at, vec![(bytes, None)]);
+                }
+                // No picture there: keep the page itself as a link card.
+                Ok(crate::web::Fetched::Page { title }) => {
+                    self.add_link_card(canvas, at, url, title);
                 }
                 Err(err) => {
                     eprintln!("coreboard: {url}: {err}");
@@ -2067,7 +2094,7 @@ impl CoreBoardApp {
 
     /// Saves the current board and opens (or creates) the board in `dir`.
     fn switch_board(&mut self, ctx: &egui::Context, dir: std::path::PathBuf) {
-        let store = match Store::open(dir.clone()) {
+        let mut store = match Store::open(dir.clone()) {
             Ok(store) => store,
             Err(err) => {
                 self.toast(format!("Can't open {}: {err}", dir.display()));
@@ -2096,7 +2123,7 @@ impl CoreBoardApp {
         self.watch_pending.clear();
         self.watch_error = None;
         self.dirty_since = None;
-        self.show_help = self.board.items.is_empty();
+        self.show_help = self.board.items.is_empty() && self.store.unreadable.is_none();
         self.window_level_sent = false;
         self.new_board_name.clear();
         boards::remember(&self.store.dir);
@@ -2136,14 +2163,27 @@ impl CoreBoardApp {
 
         // Files dropped from the OS.
         if !dropped.is_empty() {
+            // Pictures go on the board as images; anything else (an Illustrator file, a video,
+            // a shortcut, a folder) as a card that opens it. Only the start of each file is
+            // read to tell, so dropping a big video doesn't load it all.
             let mut sources = Vec::new();
+            let mut others = Vec::new();
             for file in &dropped {
-                match file.bytes() {
-                    Ok(bytes) => sources.push((bytes, Some(file.path()))),
-                    Err(err) => eprintln!("coreboard: {}: {err}", file.path().display()),
+                let path = file.path();
+                if looks_like_picture(path) {
+                    match file.bytes() {
+                        Ok(bytes) => sources.push((bytes, Some(path))),
+                        Err(err) => eprintln!("coreboard: {}: {err}", path.display()),
+                    }
+                } else {
+                    others.push(path.to_path_buf());
                 }
             }
             self.import_all(canvas, anchor, sources);
+            if !others.is_empty() {
+                let at = anchor + vec2(0.0, 40.0);
+                self.add_file_cards(canvas, at, others);
+            }
         }
 
         // Keyboard, unless a text field (note, frame title, dialog) is taking typing.
@@ -2342,7 +2382,9 @@ impl CoreBoardApp {
             } else if let Some(id) = self.hit_handle(canvas, pos) {
                 let item = self.board.items.iter().find(|i| i.id == id).unwrap();
                 let aspect = match item.kind {
-                    Kind::Image | Kind::Palette { .. } => Some(item.size[0] / item.size[1]),
+                    Kind::Image | Kind::Palette { .. } | Kind::File { .. } | Kind::Link { .. } => {
+                        Some(item.size[0] / item.size[1])
+                    }
                     Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. } => None,
                 };
                 self.checkpoint();
@@ -2503,6 +2545,17 @@ impl CoreBoardApp {
                         }
                     }
                 }
+                // Ctrl+click (no drag) on an empty spot: add a link there.
+                Drag::Marquee { start, additive }
+                    if additive
+                        && modifiers.command
+                        && !modifiers.shift
+                        && pointer
+                            .interact_pos()
+                            .is_some_and(|end| end.distance(start) < 4.0) =>
+                {
+                    self.open_link_prompt(canvas, start);
+                }
                 Drag::Marquee { start, additive } => {
                     if let Some(end) = pointer.interact_pos() {
                         let area = Rect::from_two_pos(start, end);
@@ -2536,7 +2589,11 @@ impl CoreBoardApp {
             && self.crop_mode.is_none()
             && let Some(id) = self.hit(canvas, pos)
         {
-            self.begin_edit(id, false);
+            if self.board.items.iter().any(|i| i.id == id && i.is_card()) {
+                self.open_card(&ctx, id);
+            } else {
+                self.begin_edit(id, false);
+            }
         }
     }
 
@@ -2648,6 +2705,15 @@ impl CoreBoardApp {
                 Kind::Frame { title } => {
                     let title_rect = self.frame_title_rect(canvas, item);
                     draw_frame(&painter, rect, title_rect, title, zoom, opacity, editing);
+                    if selected {
+                        draw_selection(&painter, rect, handle);
+                    }
+                    continue;
+                }
+                Kind::File { .. } | Kind::Link { .. } => {
+                    if let Some(face) = item.kind.card_face() {
+                        draw_card(&painter, rect, &face, opacity);
+                    }
                     if selected {
                         draw_selection(&painter, rect, handle);
                     }
@@ -2828,11 +2894,11 @@ impl CoreBoardApp {
             );
         }
 
-        if self.board.items.is_empty() {
+        if self.board.items.is_empty() && self.store.unreadable.is_none() {
             painter.text(
                 canvas.center(),
                 Align2::CENTER_CENTER,
-                "Drop images here, paste with Ctrl+V, or press N for a note",
+                "Drop images or files here, paste with Ctrl+V, or press N for a note",
                 FontId::proportional(22.0),
                 Color32::from_gray(120),
             );
@@ -2876,53 +2942,7 @@ impl CoreBoardApp {
         );
 
         if self.show_help {
-            let help = "Drag & drop / Ctrl+V   add images\n\
-                        Scroll / pinch         zoom\n\
-                        Right/middle/Space drag pan\n\
-                        Drag empty space       box select\n\
-                        Shift+click            toggle select\n\
-                        Corner handle          resize\n\
-                        R / Shift+R            rotate 90° cw / ccw\n\
-                        G / Shift+G            grid arrange / same height\n\
-                        M                      mirror (flip horizontal)\n\
-                        B                      black & white\n\
-                        [ / ]                  window opacity\n\
-                        T                      always on top\n\
-                        Ctrl+E                 export PNG (+ watermark)\n\
-                        Ctrl+O                 boards: new, open, recent\n\
-                        Hold Q                 radial menu: find similar, web…\n\
-                        Ctrl+T / Ctrl+F        tags / search\n\
-                        L / Shift+L            lock / pin to screen\n\
-                        Alt+arrows, Alt+C/M    align (Alt+H/V: space evenly)\n\
-                        Alt while dragging     move without snapping\n\
-                        V / Shift+V            value, saturation, noise, squint\n\
-                        C / Shift+C            composition guide / turn spiral\n\
-                        I                      color picker (HSV + value)\n\
-                        D / Shift+D            draw on images / hide drawings\n\
-                        Ctrl+D                 duplicate\n\
-                        Double-click image     caption\n\
-                        Shift+B                whole board in values\n\
-                        X / Shift+X            crop (drag) / reset crop\n\
-                        P / Shift+P            extract 6 / 10 color palette\n\
-                        N / Shift+N            new note / note color\n\
-                        Ctrl+G                 frame around selection\n\
-                        E                      empty image slot (drop/paste fills)\n\
-                        Double-click           edit note, frame or slot label\n\
-                        Del                    remove\n\
-                        Ctrl+Z / Ctrl+Shift+Z  undo / redo\n\
-                        Enter                  focus view: image big, ← → step through\n\
-                        S                      surprise me: a random image from any board\n\
-                        Ctrl+V a web link      download the picture (or the page's picture)\n\
-                        F                      fit to view\n\
-                        1                      zoom 100%\n\
-                        H                      toggle this help";
-            let help = format!("Core Board {}\n\n{help}", env!("CARGO_PKG_VERSION"));
-            let galley =
-                painter.layout_no_wrap(help, FontId::monospace(12.0), Color32::from_gray(200));
-            let pos = canvas.right_top() + vec2(-galley.size().x - 18.0, 12.0);
-            let bg = Rect::from_min_size(pos, galley.size()).expand(8.0);
-            painter.rect_filled(bg, CornerRadius::same(6), Color32::from_black_alpha(180));
-            painter.galley(pos, galley, Color32::WHITE);
+            paint_help(&painter, canvas);
         }
 
         if let Some((msg, at)) = &self.toast {
@@ -2959,8 +2979,10 @@ impl CoreBoardApp {
         self.tags_window(ctx);
         self.align_toolbar(ctx, canvas);
         self.paint_radial(ctx);
+        self.link_prompt_window(ctx, canvas);
         self.minimap(ctx, canvas);
         self.update_banner(ctx, canvas);
+        self.unreadable_banner(ctx, canvas);
     }
 }
 
@@ -3005,6 +3027,7 @@ impl eframe::App for CoreBoardApp {
         self.receive_finds();
         self.receive_thumbs(&ctx);
         self.receive_fetches(&ctx, canvas);
+        self.receive_titles();
         self.receive_updates(&ctx);
         self.receive_exports();
         self.receive_palettes();
@@ -3406,6 +3429,181 @@ fn golden_spiral(rect: Rect, orientation: u8) -> Vec<Vec<Pos2>> {
                 .collect()
         })
         .collect()
+}
+
+/// The shortcuts overlay (H), grouped by what they're for.
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Add & move around",
+        &[
+            ("Drag & drop / Ctrl+V", "add images, or any file as a card"),
+            ("Ctrl+V a web link", "download its picture (or add a link)"),
+            ("Ctrl+click empty spot", "add a link card"),
+            ("Double-click a card", "open the file or link"),
+            ("Scroll / pinch", "zoom"),
+            ("Right/middle/Space drag", "pan"),
+            ("F / 1", "fit to view / zoom 100%"),
+            ("Drag empty space", "box select"),
+            ("Shift+click", "add to / remove from selection"),
+            ("Corner handle", "resize"),
+            ("Del", "remove"),
+            ("Ctrl+Z / Ctrl+Shift+Z", "undo / redo"),
+            ("Ctrl+D", "duplicate"),
+        ],
+    ),
+    (
+        "Arrange",
+        &[
+            ("G / Shift+G", "grid arrange / same height"),
+            ("Alt+arrows, Alt+C / M", "align"),
+            ("Alt+H / Alt+V", "space evenly"),
+            ("Alt while dragging", "move without snapping"),
+            ("L / Shift+L", "lock / pin to screen"),
+            ("Ctrl+G", "frame around selection"),
+        ],
+    ),
+    (
+        "Images",
+        &[
+            ("R / Shift+R", "rotate 90° cw / ccw"),
+            ("M", "mirror"),
+            ("X / Shift+X", "crop (drag) / reset crop"),
+            ("Double-click image", "caption"),
+            ("Enter", "focus view, ← → to step through"),
+            ("S", "surprise me: a random image"),
+        ],
+    ),
+    (
+        "Study",
+        &[
+            ("V / Shift+V", "value, saturation, noise, squint"),
+            ("B", "black & white"),
+            ("Shift+B", "whole board in values"),
+            ("C / Shift+C", "composition guide / turn spiral"),
+            ("I", "color picker (HSV + value)"),
+            ("P / Shift+P", "6 / 10 color palette"),
+            ("Hold Q", "radial menu: find similar, web…"),
+        ],
+    ),
+    (
+        "Notes & drawing",
+        &[
+            ("N / Shift+N", "new note / note color"),
+            ("E", "empty image slot"),
+            ("Double-click", "edit a note, frame or slot"),
+            ("D / Shift+D", "draw on images / hide drawings"),
+        ],
+    ),
+    (
+        "Boards & window",
+        &[
+            ("Ctrl+O", "boards, updates, settings"),
+            ("Ctrl+T / Ctrl+F", "tags / search"),
+            ("Ctrl+E", "export PNG (+ watermark)"),
+            ("[ / ]", "window opacity"),
+            ("T", "always on top"),
+            ("H", "show / hide this help"),
+        ],
+    ),
+];
+
+/// Draws the shortcuts overlay in the top-right corner: sections flow into as many columns
+/// as the window's height needs.
+fn paint_help(painter: &egui::Painter, canvas: Rect) {
+    const KEY_FONT: f32 = 12.0;
+    const ROW: f32 = 18.0;
+    const HEADER: f32 = 26.0;
+    const SECTION_GAP: f32 = 12.0;
+    const COLUMN_GAP: f32 = 28.0;
+    let key_color = Color32::from_rgb(170, 205, 255);
+    let text_color = Color32::from_gray(205);
+    let key_galley =
+        |t: &str| painter.layout_no_wrap(t.to_string(), FontId::monospace(KEY_FONT), key_color);
+    let text_galley =
+        |t: &str| painter.layout_no_wrap(t.to_string(), FontId::proportional(13.0), text_color);
+    // Group sections into columns no taller than the window.
+    let max_height = (canvas.height() - 80.0).max(200.0);
+    let height_of = |rows: usize| HEADER + rows as f32 * ROW + SECTION_GAP;
+    let mut columns: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut used = 0.0;
+    for (i, (_, rows)) in HELP.iter().enumerate() {
+        let h = height_of(rows.len());
+        if used + h > max_height && !columns.last().is_some_and(|c| c.is_empty()) {
+            columns.push(Vec::new());
+            used = 0.0;
+        }
+        columns.last_mut().expect("one column").push(i);
+        used += h;
+    }
+    // Each column is as wide as its widest key plus its widest description.
+    let widths: Vec<(f32, f32)> = columns
+        .iter()
+        .map(|col| {
+            col.iter().flat_map(|&i| HELP[i].1.iter()).fold(
+                (0.0f32, 0.0f32),
+                |(k, d), (key, desc)| {
+                    (
+                        k.max(key_galley(key).size().x),
+                        d.max(text_galley(desc).size().x),
+                    )
+                },
+            )
+        })
+        .collect();
+    let total_w: f32 = widths.iter().map(|(k, d)| k + 14.0 + d).sum::<f32>()
+        + COLUMN_GAP * (columns.len() as f32 - 1.0);
+    let title = format!("Core Board {}  ·  shortcuts", env!("CARGO_PKG_VERSION"));
+    let title_galley = painter.layout_no_wrap(title, FontId::proportional(15.0), Color32::WHITE);
+    let total_h = columns
+        .iter()
+        .map(|c| c.iter().map(|&i| height_of(HELP[i].1.len())).sum::<f32>())
+        .fold(0.0, f32::max)
+        + 30.0;
+    let origin = pos2(
+        (canvas.max.x - total_w - 26.0).max(canvas.min.x + 12.0),
+        canvas.min.y + 14.0,
+    );
+    let bg = Rect::from_min_size(origin, vec2(total_w, total_h)).expand(12.0);
+    painter.rect_filled(bg, CornerRadius::same(8), Color32::from_rgb(18, 19, 22));
+    painter.galley(origin, title_galley, Color32::WHITE);
+    let mut x = origin.x;
+    for (col, (key_w, desc_w)) in columns.iter().zip(&widths) {
+        let mut y = origin.y + 30.0;
+        for &i in col {
+            let (name, rows) = HELP[i];
+            painter.text(
+                pos2(x, y + 4.0),
+                Align2::LEFT_TOP,
+                name.to_uppercase(),
+                FontId::proportional(11.5),
+                ACCENT,
+            );
+            y += HEADER;
+            for (key, desc) in rows.iter() {
+                painter.galley(pos2(x, y), key_galley(key), Color32::WHITE);
+                painter.galley(
+                    pos2(x + key_w + 14.0, y - 1.0),
+                    text_galley(desc),
+                    Color32::WHITE,
+                );
+                y += ROW;
+            }
+            y += SECTION_GAP;
+        }
+        x += key_w + 14.0 + desc_w + COLUMN_GAP;
+    }
+}
+
+/// Whether the file at `path` is a picture, judged by its first bytes (so a big video isn't
+/// read in full just to find out). Folders and unreadable files aren't.
+fn looks_like_picture(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 64];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let n = file.read(&mut head).unwrap_or(0);
+    path.is_file() && image::guess_format(&head[..n]).is_ok()
 }
 
 fn image_dimensions(bytes: &[u8]) -> image::ImageResult<(u32, u32)> {

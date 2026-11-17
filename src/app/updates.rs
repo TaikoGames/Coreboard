@@ -261,3 +261,56 @@ impl CoreBoardApp {
         }
     }
 }
+
+impl CoreBoardApp {
+    /// Shown while the open board couldn't be read: it's left untouched, and this explains why.
+    pub(super) fn unreadable_banner(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let Some(reason) = self.store.unreadable.clone() else {
+            return;
+        };
+        let mut check = false;
+        egui::Area::new(egui::Id::unique("coreboard-unreadable"))
+            .order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .constrain_to(canvas)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(18, 14))
+                    .show(ui, |ui| {
+                        ui.set_max_width(440.0);
+                        ui.label(
+                            egui::RichText::new("This board can't be opened in this version")
+                                .strong()
+                                .size(16.0)
+                                .color(Color32::WHITE),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            "It was probably saved by a newer Core Board. Your board is safe: \
+                             this version won't change or save over it. Update Core Board to \
+                             open it.",
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("Details: {reason}"))
+                                .small()
+                                .weak(),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            check = ui
+                                .button(egui::RichText::new("Check for updates").strong())
+                                .clicked();
+                            if ui.button("Download page").clicked() {
+                                ctx.open_url(egui::OpenUrl::new_tab(update::DOWNLOAD_PAGE));
+                            }
+                            if ui.button("Other boards…").clicked() {
+                                self.show_boards = true;
+                            }
+                        });
+                    });
+            });
+        if check {
+            self.check_for_updates(true);
+        }
+    }
+}

@@ -112,6 +112,10 @@ impl CoreBoardApp {
                             let c = colors.first().copied().unwrap_or([120, 120, 120]);
                             painter.rect_filled(r, CornerRadius::ZERO, rgb(c));
                         }
+                        Kind::File { .. } | Kind::Link { .. } => {
+                            let c = item.kind.card_face().map_or([120, 120, 130], |f| f.color);
+                            painter.rect_filled(r, CornerRadius::ZERO, rgb(c));
+                        }
                         Kind::Placeholder { .. } => {
                             painter.rect_stroke(
                                 r,
