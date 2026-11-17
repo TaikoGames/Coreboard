@@ -15,8 +15,8 @@ pub(super) struct LinkPrompt {
     focus: bool,
 }
 
-/// (board generation, card id, the page's title)
-pub(super) type Titled = (u64, u64, Option<String>);
+/// (board generation, card id, the page's title and preview picture)
+pub(super) type Previewed = (u64, u64, crate::web::Preview);
 
 impl CoreBoardApp {
     /// Puts a card for each of `kinds` (files or links) at `at` (screen), slightly fanned out,
@@ -79,38 +79,64 @@ impl CoreBoardApp {
         url: String,
         title: Option<String>,
     ) {
-        let known = title.is_some();
-        let ids = self.add_cards(
+        // The title and preview picture arrive in the background (see `receive_previews`).
+        self.add_cards(
             canvas,
             at,
             vec![Kind::Link {
-                url: url.clone(),
+                url,
                 title: title.unwrap_or_default(),
             }],
         );
-        if !known && let Some(&id) = ids.first() {
-            let tx = self.title_tx.clone();
-            let generation = self.generation;
+    }
+
+    /// Asks for the title and preview picture of every link card that has no picture yet
+    /// (once per card per session: new cards, and ones made before previews existed).
+    pub(super) fn request_previews(&mut self) {
+        let generation = self.generation;
+        let wanted: Vec<(u64, String)> = self
+            .board
+            .items
+            .iter()
+            .filter(|i| i.file.is_empty() && !self.preview_asked.contains(&(generation, i.id)))
+            .filter_map(|i| match &i.kind {
+                Kind::Link { url, .. } => Some((i.id, url.clone())),
+                _ => None,
+            })
+            .collect();
+        for (id, url) in wanted {
+            self.preview_asked.insert((generation, id));
+            let tx = self.preview_tx.clone();
             std::thread::spawn(move || {
-                let _ = tx.send((generation, id, crate::web::page_title(&url)));
+                let _ = tx.send((generation, id, crate::web::page_preview(&url)));
             });
         }
     }
 
-    pub(super) fn receive_titles(&mut self) {
-        while let Ok((generation, id, title)) = self.title_rx.try_recv() {
-            let Some(title) = title.filter(|_| generation == self.generation) else {
+    pub(super) fn receive_previews(&mut self) {
+        while let Ok((generation, id, preview)) = self.preview_rx.try_recv() {
+            if generation != self.generation {
+                continue;
+            }
+            let file = preview
+                .image
+                .and_then(|bytes| self.store.import(&bytes, "jpg").ok());
+            let Some(item) = self.board.items.iter_mut().find(|i| i.id == id) else {
                 continue;
             };
-            if let Some(Kind::Link { title: t, .. }) = self
-                .board
-                .items
-                .iter_mut()
-                .find(|i| i.id == id)
-                .map(|i| &mut i.kind)
-                && t.is_empty()
-            {
-                *t = title;
+            let Kind::Link { title, .. } = &mut item.kind else {
+                continue;
+            };
+            let mut changed = false;
+            if let Some(new) = preview.title.filter(|_| title.is_empty()) {
+                *title = new;
+                changed = true;
+            }
+            if let Some(file) = file.filter(|_| item.file.is_empty()) {
+                item.file = file;
+                changed = true;
+            }
+            if changed {
                 self.touch();
             }
         }
@@ -128,13 +154,13 @@ impl CoreBoardApp {
             Kind::File { path, .. } => {
                 let path = path.clone();
                 if !std::path::Path::new(&path).exists() {
-                    self.toast(format!("Can't find {path}: it was moved or deleted"));
+                    self.toast(trf("Can't find {}: it was moved or deleted", &[&path]));
                     return;
                 }
                 if let Err(err) = opener::open(&path) {
-                    self.toast(format!("Couldn't open it: {err}"));
+                    self.toast(trf("Couldn't open it: {}", &[&err]));
                 } else {
-                    self.toast("Opening…".into());
+                    self.toast(tr("Opening…").into());
                 }
             }
             _ => {}
@@ -163,10 +189,10 @@ impl CoreBoardApp {
             .constrain_to(canvas)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label(egui::RichText::new("Add a link").strong());
+                    ui.label(egui::RichText::new(tr("Add a link")).strong());
                     let field = ui.add(
                         egui::TextEdit::singleline(&mut prompt.text)
-                            .hint_text("Paste or type a web address")
+                            .hint_text(tr("Paste or type a web address"))
                             .desired_width(300.0),
                     );
                     if std::mem::take(&mut prompt.focus) {
@@ -174,12 +200,12 @@ impl CoreBoardApp {
                     }
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     ui.horizontal(|ui| {
-                        add = ui.button("Add").clicked() || enter;
-                        cancel = ui.button("Cancel").clicked()
+                        add = ui.button(tr("Add")).clicked() || enter;
+                        cancel = ui.button(tr("Cancel")).clicked()
                             || ui.input(|i| i.key_pressed(Key::Escape));
                     });
                     ui.label(
-                        egui::RichText::new("Double-click the card to open the page.")
+                        egui::RichText::new(tr("Double-click the card to open the page."))
                             .small()
                             .weak(),
                     );
@@ -198,7 +224,7 @@ impl CoreBoardApp {
             } else if let Some(url) = crate::web::normalize_link(&text) {
                 self.add_link_card(canvas, at, url, None);
             } else if !text.is_empty() {
-                self.toast("That doesn't look like a web address".into());
+                self.toast(tr("That doesn't look like a web address").into());
                 self.link_prompt = Some(LinkPrompt {
                     focus: true,
                     ..prompt
@@ -209,7 +235,14 @@ impl CoreBoardApp {
 }
 
 /// Draws a file or link card into `rect`.
-pub(super) fn draw_card(painter: &egui::Painter, rect: Rect, face: &CardFace, opacity: f32) {
+/// `preview` is the link's picture (texture and its size in pixels), shown in place of the badge.
+pub(super) fn draw_card(
+    painter: &egui::Painter,
+    rect: Rect,
+    face: &CardFace,
+    opacity: f32,
+    preview: Option<(egui::TextureId, Vec2)>,
+) {
     // Everything scales with the card, so it looks the same at any zoom or size.
     let s = rect.height() / CARD_SIZE[1];
     let radius = CornerRadius::same((8.0 * s).clamp(1.0, 14.0) as u8);
@@ -232,28 +265,45 @@ pub(super) fn draw_card(painter: &egui::Painter, rect: Rect, face: &CardFace, op
     if s * CARD_SUB_FONT < 4.0 {
         return;
     }
-    // The badge: a colored tile with the file type, like a file icon.
     let pad = 12.0 * s;
-    let tile = Rect::from_min_size(
-        rect.min + vec2(pad, pad),
-        vec2(rect.height() - 2.0 * pad, rect.height() - 2.0 * pad) * vec2(0.86, 1.0),
-    );
-    let color = rgb(face.color).gamma_multiply(opacity);
-    painter.rect_filled(
-        tile,
-        CornerRadius::same((6.0 * s).clamp(1.0, 10.0) as u8),
-        color,
-    );
-    let badge_font = (tile.width() / (face.badge.chars().count().max(2) as f32 * 0.68))
-        .min(15.0 * s)
-        .max(1.0);
-    painter.text(
-        tile.center(),
-        Align2::CENTER_CENTER,
-        &face.badge,
-        FontId::proportional(badge_font),
-        Color32::WHITE.gamma_multiply(opacity),
-    );
+    let tile = if let Some((texture, size)) = preview {
+        // The page's picture, filling a wide thumbnail on the left (cropped, not squashed).
+        let inset = 6.0 * s;
+        let h = rect.height() - 2.0 * inset;
+        let thumb = Rect::from_min_size(rect.min + vec2(inset, inset), vec2(h * 1.5, h));
+        let [u0, v0, u1, v1] = cover_uv(size, thumb.size());
+        let mut mesh = egui::Mesh::with_texture(texture);
+        mesh.add_rect_with_uv(
+            thumb,
+            Rect::from_min_max(pos2(u0, v0), pos2(u1, v1)),
+            Color32::WHITE.gamma_multiply(opacity),
+        );
+        painter.add(egui::Shape::mesh(mesh));
+        thumb.translate(vec2(inset - pad, 0.0))
+    } else {
+        // The badge: a colored tile with the file type, like a file icon.
+        let tile = Rect::from_min_size(
+            rect.min + vec2(pad, pad),
+            vec2(rect.height() - 2.0 * pad, rect.height() - 2.0 * pad) * vec2(0.86, 1.0),
+        );
+        let color = rgb(face.color).gamma_multiply(opacity);
+        painter.rect_filled(
+            tile,
+            CornerRadius::same((6.0 * s).clamp(1.0, 10.0) as u8),
+            color,
+        );
+        let badge_font = (tile.width() / (face.badge.chars().count().max(2) as f32 * 0.68))
+            .min(15.0 * s)
+            .max(1.0);
+        painter.text(
+            tile.center(),
+            Align2::CENTER_CENTER,
+            &face.badge,
+            FontId::proportional(badge_font),
+            Color32::WHITE.gamma_multiply(opacity),
+        );
+        tile
+    };
     // Title and the line under it, cut to fit.
     let left = tile.max.x + pad;
     let width = (rect.max.x - pad - left).max(1.0);
@@ -281,4 +331,35 @@ pub(super) fn draw_card(painter: &egui::Painter, rect: Rect, face: &CardFace, op
     let sub_y = top + title.size().y + 3.0 * s;
     painter.galley(pos2(left, top), title, Color32::WHITE);
     painter.galley(pos2(left, sub_y), sub, Color32::WHITE);
+}
+
+/// The part of a picture (as UV coordinates) that fills `area` without stretching: the middle,
+/// cut to `area`'s shape.
+pub(crate) fn cover_uv(image: Vec2, area: Vec2) -> [f32; 4] {
+    let (iw, ih) = (image.x.max(1.0), image.y.max(1.0));
+    let want = area.x.max(1.0) / area.y.max(1.0);
+    if iw / ih > want {
+        let w = want * ih / iw;
+        [(1.0 - w) / 2.0, 0.0, (1.0 + w) / 2.0, 1.0]
+    } else {
+        let h = iw / want / ih;
+        [0.0, (1.0 - h) / 2.0, 1.0, (1.0 + h) / 2.0]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previews_are_cropped_not_squashed() {
+        // A square picture in a 3:2 thumbnail keeps the middle two thirds of its height.
+        let [u0, v0, u1, v1] = cover_uv(vec2(300.0, 300.0), vec2(90.0, 60.0));
+        assert_eq!([u0, u1], [0.0, 1.0]);
+        assert!((v1 - v0 - 2.0 / 3.0).abs() < 1e-5);
+        // A very wide picture keeps its middle.
+        let [u0, v0, u1, v1] = cover_uv(vec2(1200.0, 300.0), vec2(90.0, 60.0));
+        assert_eq!([v0, v1], [0.0, 1.0]);
+        assert!((u1 - u0 - 0.375).abs() < 1e-5 && (u0 + u1 - 1.0).abs() < 1e-5);
+    }
 }

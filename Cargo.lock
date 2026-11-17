@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "coreboard"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "ab_glyph",
  "arboard",
@@ -716,6 +716,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sys-locale",
  "ureq",
  "winresource",
 ]

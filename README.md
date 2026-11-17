@@ -205,6 +205,11 @@ If a board was saved by a newer Core Board, an older version can't read it. It t
 leaves the board alone: nothing is saved over it and none of its pictures are removed, and a backup
 copy of its board file is kept. Update Core Board to open it.
 
+## Language
+
+Core Board speaks English and Spanish. It follows your computer's language; to pick one yourself,
+open the Boards window (**Ctrl+O**) and choose under **Language** (Automatic, English, Español).
+
 ## Updates
 
 Core Board checks mikibutler.ca for a newer version when it starts (one small request; nothing
@@ -225,7 +230,7 @@ card with its name and type. **Double-click** the card to open it with its usual
 your file browser. The file stays where it is: the card is a shortcut to it.
 
 **Ctrl+click** an empty spot to add a web link: type or paste the address, and the card shows the
-page's title. Double-click it to open the page. Pasting a link to a page without a picture also
+page's title and its preview picture (the one chat apps show for links). Double-click it to open the page. Pasting a link to a page without a picture also
 makes a link card.
 
 ## Paste a web link

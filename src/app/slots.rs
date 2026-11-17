@@ -71,8 +71,8 @@ impl CoreBoardApp {
         *item = image;
         self.selection = HashSet::from([slot]);
         self.toast(match label {
-            Some(l) => format!("Filled “{l}”"),
-            None => "Slot filled".into(),
+            Some(l) => trf("Filled “{}”", &[&l]),
+            None => tr("Slot filled").into(),
         });
         self.touch();
         true
@@ -102,8 +102,8 @@ impl CoreBoardApp {
         self.board.items.remove(image_index);
         self.selection = HashSet::from([image]);
         self.toast(match label {
-            Some(l) => format!("Filled “{l}”"),
-            None => "Slot filled".into(),
+            Some(l) => trf("Filled “{}”", &[&l]),
+            None => tr("Slot filled").into(),
         });
         self.touch();
     }
@@ -233,7 +233,7 @@ pub(super) fn draw_placeholder(
         return;
     }
     let (text, color) = if label.trim().is_empty() {
-        ("Drop an image here", ink.gamma_multiply(0.8))
+        (tr("Drop an image here"), ink.gamma_multiply(0.8))
     } else {
         (label, Color32::from_gray(225).gamma_multiply(opacity))
     };

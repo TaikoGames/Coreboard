@@ -26,6 +26,8 @@ pub struct Settings {
     pub minimap: bool,
     /// Ask mikibutler.ca for a newer version on startup.
     pub check_updates: bool,
+    /// "auto" (the computer's language), "en" or "es".
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -34,6 +36,7 @@ impl Default for Settings {
             animations: true,
             minimap: true,
             check_updates: true,
+            language: "auto".into(),
         }
     }
 }

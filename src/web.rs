@@ -65,13 +65,52 @@ pub fn fetch_image(url: &str) -> Result<Fetched, String> {
     }
 }
 
-/// The title of the page at `url`, for a link card.
-pub fn page_title(url: &str) -> Option<String> {
-    let (bytes, kind) = get(&agent(), url, MAX_PAGE).ok()?;
-    if !kind.contains("html") && !looks_like_html(&bytes) {
-        return None;
+/// What a link card shows: the page's title and its preview picture.
+#[derive(Default)]
+pub struct Preview {
+    pub title: Option<String>,
+    /// A small JPEG, ready to store in the board.
+    pub image: Option<Vec<u8>>,
+}
+
+/// The longest side of a link card's stored preview picture.
+const PREVIEW_SIDE: u32 = 480;
+
+/// The title and preview picture (the one chat apps show for links) of the page at `url`.
+pub fn page_preview(url: &str) -> Preview {
+    let agent = agent();
+    let Ok((bytes, kind)) = get(&agent, url, MAX_IMAGE) else {
+        return Preview::default();
+    };
+    // A link straight to a picture is its own preview.
+    if is_image(&bytes) {
+        return Preview {
+            title: None,
+            image: shrink(&bytes),
+        };
     }
-    html_title(&String::from_utf8_lossy(&bytes))
+    if !kind.contains("html") && !looks_like_html(&bytes) {
+        return Preview::default();
+    }
+    let page = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_PAGE as usize)]);
+    let image = page_image(&page)
+        .and_then(|found| get(&agent, &resolve(url, &found), MAX_IMAGE).ok())
+        .and_then(|(bytes, _)| shrink(&bytes));
+    Preview {
+        title: html_title(&page),
+        image,
+    }
+}
+
+/// A picture made small enough to keep in a board as a card's thumbnail.
+fn shrink(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let small = image.thumbnail(PREVIEW_SIDE, PREVIEW_SIDE).to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+        .encode_image(&small)
+        .ok()?;
+    Some(out)
 }
 
 /// A page's title: the one link previews use (og:title), else its `<title>`.

@@ -13,9 +13,9 @@ impl CoreBoardApp {
             self.finish_edit();
             self.crop_mode = None;
             self.show_marks = true;
-            self.toast("Draw: drag on an image · Esc or D when done".into());
+            self.toast(tr("Draw: drag on an image · Esc or D when done").into());
         } else {
-            self.toast("Drawing done".into());
+            self.toast(tr("Drawing done").into());
         }
     }
 
@@ -99,7 +99,7 @@ impl CoreBoardApp {
                 item.marks.clear();
             }
         }
-        self.toast("Drawings cleared".into());
+        self.toast(tr("Drawings cleared").into());
         self.touch();
     }
 
@@ -147,18 +147,25 @@ impl CoreBoardApp {
                         }
                         ui.separator();
                         clear |= ui
-                            .button("Clear")
-                            .on_hover_text("Remove the drawings on the selected images")
+                            .button(tr("Clear"))
+                            .on_hover_text(tr("Remove the drawings on the selected images"))
                             .clicked();
-                        let label = if self.show_marks { "Hide" } else { "Show" };
+                        let label = if self.show_marks {
+                            tr("Hide")
+                        } else {
+                            tr("Show")
+                        };
                         if ui
                             .button(label)
-                            .on_hover_text("Show or hide all drawings (Shift+D)")
+                            .on_hover_text(tr("Show or hide all drawings (Shift+D)"))
                             .clicked()
                         {
                             self.show_marks = !self.show_marks;
                         }
-                        done |= ui.button("Done").on_hover_text("Esc or D").clicked();
+                        done |= ui
+                            .button(tr("Done"))
+                            .on_hover_text(tr("Esc or D"))
+                            .clicked();
                     });
                 });
             });

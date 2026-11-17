@@ -19,6 +19,9 @@ pub struct Latest {
     /// A few one-line highlights for the banner.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// The same highlights in Spanish, when the website has them.
+    #[serde(default)]
+    pub notes_es: Vec<String>,
     #[serde(default)]
     pub page: Option<String>,
     /// The Windows installer, for one-click updates.

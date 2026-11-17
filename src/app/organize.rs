@@ -40,7 +40,7 @@ impl CoreBoardApp {
                 item.locked = !all;
             }
         }
-        self.toast(if all { "Unlocked" } else { "Locked" }.into());
+        self.toast(if all { tr("Unlocked") } else { tr("Locked") }.into());
         self.touch();
     }
 
@@ -78,9 +78,9 @@ impl CoreBoardApp {
         }
         self.toast(
             if all {
-                "Unpinned"
+                tr("Unpinned")
             } else {
-                "Pinned to the screen"
+                tr("Pinned to the screen")
             }
             .into(),
         );
@@ -126,7 +126,7 @@ impl CoreBoardApp {
 
     pub(super) fn open_tags_window(&mut self) {
         if self.selection.is_empty() {
-            self.toast("Select something to tag".into());
+            self.toast(tr("Select something to tag").into());
             return;
         }
         self.finish_edit();
@@ -211,14 +211,14 @@ impl CoreBoardApp {
         let mut remove: Option<String> = None;
         let mut open = true;
         let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
-        egui::Window::new(format!("Tags · {n} selected"))
+        egui::Window::new(trf("Tags · {} selected", &[&n]))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_TOP, vec2(0.0, 60.0))
             .show(ctx, |ui| {
                 if on.is_empty() {
-                    ui.label(egui::RichText::new("No tags yet").weak());
+                    ui.label(egui::RichText::new(tr("No tags yet")).weak());
                 }
                 ui.horizontal_wrapped(|ui| {
                     for (tag, count) in &on {
@@ -229,7 +229,7 @@ impl CoreBoardApp {
                         };
                         if ui
                             .button(label)
-                            .on_hover_text("Remove from the selection")
+                            .on_hover_text(tr("Remove from the selection"))
                             .clicked()
                         {
                             remove = Some(tag.clone());
@@ -239,7 +239,7 @@ impl CoreBoardApp {
                 ui.add_space(4.0);
                 let field = ui.add(
                     egui::TextEdit::singleline(&mut self.new_tag)
-                        .hint_text("Add a tag and press Enter")
+                        .hint_text(tr("Add a tag and press Enter"))
                         .desired_width(260.0),
                 );
                 if self.tags_focus_pending {
@@ -254,7 +254,7 @@ impl CoreBoardApp {
                 }
                 if !suggestions.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("On this board").small().weak());
+                    ui.label(egui::RichText::new(tr("On this board")).small().weak());
                     ui.horizontal_wrapped(|ui| {
                         for tag in &suggestions {
                             if ui.small_button(format!("+ {tag}")).clicked() {
@@ -337,7 +337,7 @@ impl CoreBoardApp {
                     ui.horizontal(|ui| {
                         let field = ui.add(
                             egui::TextEdit::singleline(&mut query)
-                                .hint_text("Search tags, notes and frame titles")
+                                .hint_text(tr("Search tags, notes and frame titles"))
                                 .desired_width(300.0),
                         );
                         if std::mem::take(&mut self.search_focus_pending) {
@@ -346,7 +346,7 @@ impl CoreBoardApp {
                         let found = if query.trim().is_empty() {
                             String::new()
                         } else {
-                            format!("{} found", matches.len())
+                            trf("{} found", &[&matches.len()])
                         };
                         ui.label(egui::RichText::new(found).weak());
                         if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -356,10 +356,13 @@ impl CoreBoardApp {
                             keep = false;
                         }
                         select |= ui
-                            .add_enabled(!matches.is_empty(), egui::Button::new("Select"))
-                            .on_hover_text("Select the matches and zoom to them (Enter)")
+                            .add_enabled(!matches.is_empty(), egui::Button::new(tr("Select")))
+                            .on_hover_text(tr("Select the matches and zoom to them (Enter)"))
                             .clicked();
-                        keep &= !ui.button("✕").on_hover_text("Close search (Esc)").clicked();
+                        keep &= !ui
+                            .button("✕")
+                            .on_hover_text(tr("Close search (Esc)"))
+                            .clicked();
                     });
                     if !tags.is_empty() {
                         ui.horizontal_wrapped(|ui| {
@@ -525,7 +528,7 @@ impl CoreBoardApp {
     pub(super) fn distribute_selection(&mut self, horizontal: bool) {
         let mut picked = self.movable_selection();
         if picked.len() < 3 {
-            self.toast("Select 3 or more items to space evenly".into());
+            self.toast(tr("Select 3 or more items to space evenly").into());
             return;
         }
         let axis = usize::from(!horizontal);
@@ -565,7 +568,7 @@ impl CoreBoardApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Align").weak());
+                        ui.label(egui::RichText::new(tr("Align")).weak());
                         for (a, label, tip) in [
                             (Align::Left, "Left", "Alt+←"),
                             (Align::CenterX, "Center", "Alt+C"),
@@ -574,16 +577,24 @@ impl CoreBoardApp {
                             (Align::CenterY, "Middle", "Alt+M"),
                             (Align::Bottom, "Bottom", "Alt+↓"),
                         ] {
-                            if ui.small_button(label).on_hover_text(tip).clicked() {
+                            if ui.small_button(tr(label)).on_hover_text(tip).clicked() {
                                 align = Some(a);
                             }
                         }
                         ui.separator();
-                        ui.label(egui::RichText::new("Space").weak());
-                        if ui.small_button("Across").on_hover_text("Alt+H").clicked() {
+                        ui.label(egui::RichText::new(tr("Space")).weak());
+                        if ui
+                            .small_button(tr("Across"))
+                            .on_hover_text(tr("Alt+H"))
+                            .clicked()
+                        {
                             distribute = Some(true);
                         }
-                        if ui.small_button("Down").on_hover_text("Alt+V").clicked() {
+                        if ui
+                            .small_button(tr("Down"))
+                            .on_hover_text(tr("Alt+V"))
+                            .clicked()
+                        {
                             distribute = Some(false);
                         }
                     });

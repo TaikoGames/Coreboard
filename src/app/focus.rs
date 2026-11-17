@@ -85,7 +85,7 @@ impl CoreBoardApp {
             // Nothing picked: start from the first image.
             reading_order(&self.board.items).first().copied()
         }) else {
-            self.toast("No images to focus on".into());
+            self.toast(tr("No images to focus on").into());
             return;
         };
         self.open_focus_on(id);
@@ -148,7 +148,7 @@ impl CoreBoardApp {
             );
         }
         if picks.is_empty() {
-            self.toast("Add some images first, then press S for a surprise".into());
+            self.toast(tr("Add some images first, then press S for a surprise").into());
             return;
         }
         let (dir, id) = picks.swap_remove(random_below(picks.len()));
@@ -162,7 +162,7 @@ impl CoreBoardApp {
                 // The switch didn't go through (the board couldn't be opened).
                 return;
             }
-            self.toast(format!("Surprise! From \u{201c}{name}\u{201d}"));
+            self.toast(trf("Surprise! From \u{201c}{}\u{201d}", &[&name]));
         }
         self.open_focus_on(id);
     }
@@ -282,8 +282,14 @@ impl CoreBoardApp {
                 Key::C if !m.command => self.cycle_guide(),
                 Key::D if !m.command && m.shift => {
                     self.show_marks = !self.show_marks;
-                    let state = if self.show_marks { "shown" } else { "hidden" };
-                    self.toast(format!("Drawings {state}"));
+                    self.toast(
+                        if self.show_marks {
+                            tr("Drawings shown")
+                        } else {
+                            tr("Drawings hidden")
+                        }
+                        .into(),
+                    );
                 }
                 _ => {}
             }
@@ -438,7 +444,7 @@ impl CoreBoardApp {
                 y += galley.size().y + 4.0;
                 painter.galley(pos, galley, Color32::from_gray(225));
             }
-            let mut info = format!("image {} of {}", index + 1, order.len());
+            let mut info = trf("image {} of {}", &[&(index + 1), &order.len()]);
             if zoom > 1.01 {
                 info += &format!("  ·  {:.0}%", zoom * 100.0);
             }
@@ -452,7 +458,7 @@ impl CoreBoardApp {
             painter.text(
                 canvas.right_bottom() + vec2(-16.0, -12.0),
                 Align2::RIGHT_BOTTOM,
-                "← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back",
+                tr("← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back"),
                 FontId::proportional(12.0),
                 Color32::from_gray(110).gamma_multiply(alpha),
             );

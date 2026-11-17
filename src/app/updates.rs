@@ -50,7 +50,7 @@ impl CoreBoardApp {
         }
         self.updates.checking = true;
         if manual {
-            self.updates.status = Some("Checking…".into());
+            self.updates.status = Some(tr("Checking…").into());
         }
         let tx = self.updates.tx.clone();
         std::thread::spawn(move || {
@@ -63,7 +63,36 @@ impl CoreBoardApp {
             animations: self.animations,
             minimap: self.minimap,
             check_updates: self.check_updates,
+            language: self.language.clone(),
         });
+    }
+
+    /// The language picker in the Boards window: automatic (the computer's), English, Español.
+    pub(super) fn language_controls(&mut self, ui: &mut egui::Ui) {
+        let auto = match crate::i18n::system() {
+            crate::i18n::Lang::Spanish => "Español",
+            crate::i18n::Lang::English => "English",
+        };
+        let name = |code: &str| match code {
+            "en" => "English".to_string(),
+            "es" => "Español".to_string(),
+            _ => trf("Automatic ({})", &[&auto]),
+        };
+        let before = self.language.clone();
+        ui.horizontal(|ui| {
+            ui.label(tr("Language"));
+            egui::ComboBox::from_id_salt("language")
+                .selected_text(name(&self.language))
+                .show_ui(ui, |ui| {
+                    for code in ["auto", "en", "es"] {
+                        ui.selectable_value(&mut self.language, code.to_string(), name(code));
+                    }
+                });
+        });
+        if self.language != before {
+            crate::i18n::apply(&self.language);
+            self.save_settings();
+        }
     }
 
     pub(super) fn receive_updates(&mut self, ctx: &egui::Context) {
@@ -83,7 +112,7 @@ impl CoreBoardApp {
                     match result {
                         Ok(latest) if update::is_newer(&latest.version, CURRENT) => {
                             self.updates.status =
-                                Some(format!("Version {} is available", latest.version));
+                                Some(trf("Version {} is available", &[&latest.version]));
                             self.updates.available = Some(latest);
                             // Asking again brings the banner back.
                             if manual {
@@ -91,16 +120,16 @@ impl CoreBoardApp {
                             }
                         }
                         Ok(_) => {
-                            self.updates.status = Some(format!("You're up to date ({CURRENT})"));
+                            self.updates.status = Some(trf("You're up to date ({})", &[&CURRENT]));
                             if manual {
-                                self.toast(format!("Core Board {CURRENT} is the latest version"));
+                                self.toast(trf("Core Board {} is the latest version", &[&CURRENT]));
                             }
                         }
                         Err(err) => {
                             eprintln!("coreboard: update check: {err}");
-                            self.updates.status = Some(format!("Couldn't check: {err}"));
+                            self.updates.status = Some(trf("Couldn't check: {}", &[&err]));
                             if manual {
-                                self.toast(format!("Couldn't check for updates: {err}"));
+                                self.toast(trf("Couldn't check for updates: {}", &[&err]));
                             }
                         }
                     }
@@ -116,8 +145,9 @@ impl CoreBoardApp {
                         }
                         Err(err) => {
                             eprintln!("coreboard: update: {err}");
-                            self.toast(format!(
-                                "Update failed: {err}. Opening the download page instead."
+                            self.toast(trf(
+                                "Update failed: {}. Opening the download page instead.",
+                                &[&err],
                             ));
                             ctx.open_url(egui::OpenUrl::new_tab(update::DOWNLOAD_PAGE));
                         }
@@ -165,44 +195,55 @@ impl CoreBoardApp {
                         ui.set_max_width(420.0);
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new(format!(
+                                egui::RichText::new(trf(
                                     "Core Board {} is available",
-                                    latest.version
+                                    &[&latest.version],
                                 ))
                                 .strong()
                                 .color(Color32::WHITE),
                             );
                             ui.label(
-                                egui::RichText::new(format!("(you have {CURRENT})"))
+                                egui::RichText::new(trf("(you have {})", &[&CURRENT]))
                                     .small()
                                     .weak(),
                             );
                         });
-                        for note in latest.notes.iter().take(3) {
+                        let notes = if crate::i18n::current() == crate::i18n::Lang::Spanish
+                            && !latest.notes_es.is_empty()
+                        {
+                            &latest.notes_es
+                        } else {
+                            &latest.notes
+                        };
+                        for note in notes.iter().take(3) {
                             ui.label(egui::RichText::new(format!("• {note}")).small());
                         }
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if self.updates.downloading {
                                 ui.spinner();
-                                ui.label("Downloading the update…");
+                                ui.label(tr("Downloading the update…"));
                             } else {
-                                let label = if one_click { "Update now" } else { "Download" };
+                                let label = if one_click {
+                                    tr("Update now")
+                                } else {
+                                    tr("Download")
+                                };
                                 update_now = ui
                                     .button(egui::RichText::new(label).strong())
                                     .on_hover_text(if one_click {
-                                        "Downloads and installs it, then reopens Core Board. \
-                                         Your boards are saved first."
+                                        tr("Downloads and installs it, then reopens Core Board. \
+                                         Your boards are saved first.")
                                     } else {
-                                        "Opens the download page"
+                                        tr("Opens the download page")
                                     })
                                     .clicked();
-                                if ui.button("What's new").clicked() {
+                                if ui.button(tr("What's new")).clicked() {
                                     ctx.open_url(egui::OpenUrl::new_tab(
                                         "https://mikibutler.ca/coreboard/#releases",
                                     ));
                                 }
-                                later = ui.button("Later").clicked();
+                                later = ui.button(tr("Later")).clicked();
                             }
                         });
                     });
@@ -222,16 +263,16 @@ impl CoreBoardApp {
         ui.horizontal(|ui| {
             let checking = self.updates.checking;
             if ui
-                .add_enabled(!checking, egui::Button::new("Check for updates"))
+                .add_enabled(!checking, egui::Button::new(tr("Check for updates")))
                 .clicked()
             {
                 self.check_for_updates(true);
             }
             if ui
-                .button("Download page")
-                .on_hover_text(
+                .button(tr("Download page"))
+                .on_hover_text(tr(
                     "mikibutler.ca/coreboard: every version, for Windows, macOS and Linux",
-                )
+                ))
                 .clicked()
             {
                 ui.ctx()
@@ -243,18 +284,19 @@ impl CoreBoardApp {
         }
         if self.updates.available.is_some()
             && self.updates.dismissed
-            && ui.link("Show the update").clicked()
+            && ui.link(tr("Show the update")).clicked()
         {
             self.updates.dismissed = false;
         }
+        self.language_controls(ui);
         if ui
             .checkbox(
                 &mut self.check_updates,
-                "Check for updates when Core Board starts",
+                tr("Check for updates when Core Board starts"),
             )
-            .on_hover_text(
+            .on_hover_text(tr(
                 "One small request to mikibutler.ca. Nothing about you or your boards is sent.",
-            )
+            ))
             .changed()
         {
             self.save_settings();
@@ -279,31 +321,31 @@ impl CoreBoardApp {
                     .show(ui, |ui| {
                         ui.set_max_width(440.0);
                         ui.label(
-                            egui::RichText::new("This board can't be opened in this version")
+                            egui::RichText::new(tr("This board can't be opened in this version"))
                                 .strong()
                                 .size(16.0)
                                 .color(Color32::WHITE),
                         );
                         ui.add_space(4.0);
-                        ui.label(
+                        ui.label(tr(
                             "It was probably saved by a newer Core Board. Your board is safe: \
                              this version won't change or save over it. Update Core Board to \
                              open it.",
-                        );
+                        ));
                         ui.label(
-                            egui::RichText::new(format!("Details: {reason}"))
+                            egui::RichText::new(trf("Details: {}", &[&reason]))
                                 .small()
                                 .weak(),
                         );
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             check = ui
-                                .button(egui::RichText::new("Check for updates").strong())
+                                .button(egui::RichText::new(tr("Check for updates")).strong())
                                 .clicked();
-                            if ui.button("Download page").clicked() {
+                            if ui.button(tr("Download page")).clicked() {
                                 ctx.open_url(egui::OpenUrl::new_tab(update::DOWNLOAD_PAGE));
                             }
-                            if ui.button("Other boards…").clicked() {
+                            if ui.button(tr("Other boards…")).clicked() {
                                 self.show_boards = true;
                             }
                         });

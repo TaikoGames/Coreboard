@@ -6,6 +6,7 @@ mod board;
 mod boards;
 mod export;
 mod filters;
+mod i18n;
 mod library;
 mod update;
 mod web;
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result {
     update::remove_old_copies();
+    i18n::apply(&boards::settings().language);
     // A folder given on the command line, else the board used last, else the default one.
     let dir = std::env::args_os()
         .nth(1)

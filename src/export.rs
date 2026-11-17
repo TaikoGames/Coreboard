@@ -100,8 +100,12 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 continue;
             }
             Kind::File { .. } | Kind::Link { .. } => {
+                // A link's preview picture, if it has one.
+                let preview = (!item.file.is_empty())
+                    .then(|| image::open(images_dir.join(&item.file)).ok())
+                    .flatten();
                 if let Some(face) = item.kind.card_face() {
-                    draw_card(&mut canvas, &font, (x, y, w, h), &face);
+                    draw_card(&mut canvas, &font, (x, y, w, h), &face, preview);
                 }
                 continue;
             }
@@ -279,7 +283,7 @@ fn draw_placeholder(
         along += dash + gap;
     }
     let text = if label.trim().is_empty() {
-        "Image to find"
+        crate::i18n::tr("Image to find")
     } else {
         label.trim()
     };
@@ -296,31 +300,44 @@ fn draw_card(
     font: &FontRef<'_>,
     (x, y, w, h): (i64, i64, u32, u32),
     face: &crate::board::CardFace,
+    preview: Option<DynamicImage>,
 ) {
     use crate::board::{CARD_SIZE, CARD_SUB_FONT, CARD_TITLE_FONT};
     let s = h as f32 / CARD_SIZE[1];
     fill_rect(canvas, (x, y, w, h), [38, 40, 45]);
     let pad = 12.0 * s;
-    let side = (h as f32 - 2.0 * pad).max(1.0);
-    let tile = (
-        x + pad as i64,
-        y + pad as i64,
-        (side * 0.86) as u32,
-        side as u32,
-    );
-    fill_rect(canvas, tile, face.color);
-    let badge_px =
-        (tile.2 as f32 / (face.badge.chars().count().max(2) as f32 * 0.68)).min(15.0 * s);
-    let badge = Line::layout(font, &face.badge, badge_px);
-    badge.draw(
-        font,
-        canvas,
-        tile.0 as f32 + (tile.2 as f32 - badge.width) / 2.0,
-        tile.1 as f32 + (tile.3 as f32 - badge.height) / 2.0,
-        [255, 255, 255],
-        1.0,
-    );
-    let left = tile.0 as f32 + tile.2 as f32 + pad;
+    let left = if let Some(picture) = preview {
+        // The link's picture as a wide thumbnail, cropped to fit like on the board.
+        let inset = 6.0 * s;
+        let th = ((h as f32 - 2.0 * inset).max(1.0)) as u32;
+        let tw = (th as f32 * 1.5) as u32;
+        let thumb = picture
+            .resize_to_fill(tw.max(1), th.max(1), FilterType::CatmullRom)
+            .to_rgba8();
+        imageops::overlay(canvas, &thumb, x + inset as i64, y + inset as i64);
+        x as f32 + inset + tw as f32 + pad
+    } else {
+        let side = (h as f32 - 2.0 * pad).max(1.0);
+        let tile = (
+            x + pad as i64,
+            y + pad as i64,
+            (side * 0.86) as u32,
+            side as u32,
+        );
+        fill_rect(canvas, tile, face.color);
+        let badge_px =
+            (tile.2 as f32 / (face.badge.chars().count().max(2) as f32 * 0.68)).min(15.0 * s);
+        let badge = Line::layout(font, &face.badge, badge_px);
+        badge.draw(
+            font,
+            canvas,
+            tile.0 as f32 + (tile.2 as f32 - badge.width) / 2.0,
+            tile.1 as f32 + (tile.3 as f32 - badge.height) / 2.0,
+            [255, 255, 255],
+            1.0,
+        );
+        tile.0 as f32 + tile.2 as f32 + pad
+    };
     let room = (x + w as i64) as f32 - pad - left;
     let fit = |text: &str, px: f32| {
         // Drop characters until it fits, ending with an ellipsis.

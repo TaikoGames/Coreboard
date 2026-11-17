@@ -50,13 +50,13 @@ impl CoreBoardApp {
                 .map(|(name, _, _)| name)
                 .collect::<Vec<_>>(),
             Err(err) => {
-                self.toast(format!("Can't watch {}: {err}", path.display()));
+                self.toast(trf("Can't watch {}: {}", &[&path.display(), &err]));
                 return;
             }
         };
-        self.toast(format!(
+        self.toast(trf(
             "Watching {} · new images will appear here",
-            boards::display_name(&path)
+            &[&boards::display_name(&path)],
         ));
         self.board.watch = Some(WatchFolder {
             path,
@@ -197,9 +197,12 @@ impl CoreBoardApp {
             let what = if added == 1 {
                 names[0].clone()
             } else {
-                format!("{added} images")
+                trf("{} images", &[&added])
             };
-            self.toast(format!("Added {what} from {}", boards::display_name(&dir)));
+            self.toast(trf(
+                "Added {} from {}",
+                &[&what, &boards::display_name(&dir)],
+            ));
             self.touch();
         }
     }
@@ -239,7 +242,7 @@ impl CoreBoardApp {
                 ROW_HEIGHT + FRAME_TITLE_HEIGHT + 2.0 * PAD,
             ],
             kind: Kind::Frame {
-                title: format!("Watching: {}", boards::display_name(dir)),
+                title: trf("Watching: {}", &[&boards::display_name(dir)]),
             },
             ..Item::default()
         });
@@ -251,32 +254,32 @@ impl CoreBoardApp {
 
     /// The watch-folder section of the Boards window.
     pub(super) fn watch_controls(&mut self, ui: &mut egui::Ui) {
-        ui.label("Watch a folder");
+        ui.label(tr("Watch a folder"));
         match self.board.watch.clone() {
             None => {
                 ui.label(
-                    egui::RichText::new(
+                    egui::RichText::new(tr(
                         "New images saved there (screenshots, renders) appear on this board.",
-                    )
+                    ))
                     .small()
                     .weak(),
                 );
                 ui.horizontal(|ui| {
-                    if ui.button("Choose folder…").clicked()
+                    if ui.button(tr("Choose folder…")).clicked()
                         && let Some(dir) = rfd::FileDialog::new()
-                            .set_title("Folder to watch")
+                            .set_title(tr("Folder to watch"))
                             .pick_folder()
                     {
                         self.start_watching(dir);
                     }
                     ui.add(
                         egui::TextEdit::singleline(&mut self.watch_path_input)
-                            .hint_text("or paste a folder path")
+                            .hint_text(tr("or paste a folder path"))
                             .desired_width(170.0),
                     );
                     let path = PathBuf::from(self.watch_path_input.trim());
                     if ui
-                        .add_enabled(path.is_dir(), egui::Button::new("Watch"))
+                        .add_enabled(path.is_dir(), egui::Button::new(tr("Watch")))
                         .clicked()
                     {
                         self.watch_path_input.clear();
@@ -286,22 +289,22 @@ impl CoreBoardApp {
             }
             Some(watch) => {
                 ui.label(
-                    egui::RichText::new(format!("Watching {}", watch.path.display()))
+                    egui::RichText::new(trf("Watching {}", &[&watch.path.display()]))
                         .small()
                         .strong(),
                 );
                 if let Some(err) = &self.watch_error {
-                    ui.colored_label(Color32::LIGHT_RED, format!("Can't read it: {err}"));
+                    ui.colored_label(Color32::LIGHT_RED, trf("Can't read it: {}", &[&err]));
                 }
                 ui.horizontal(|ui| {
                     if !watch.skipped.is_empty()
                         && ui
-                            .button(format!("Add the {} already there", watch.skipped.len()))
+                            .button(trf("Add the {} already there", &[&watch.skipped.len()]))
                             .clicked()
                     {
                         self.add_skipped();
                     }
-                    if ui.button("Stop watching").clicked() {
+                    if ui.button(tr("Stop watching")).clicked() {
                         self.stop_watching();
                     }
                 });

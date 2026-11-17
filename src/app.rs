@@ -15,6 +15,7 @@ use crate::board::{
 use crate::boards;
 use crate::export;
 use crate::filters::{self, Filter};
+use crate::i18n::{tr, trf};
 use crate::library::{self, Tone};
 
 mod cards;
@@ -88,14 +89,14 @@ impl RadialAction {
 
     fn label(self) -> &'static str {
         match self {
-            Self::SimilarValues => "Similar\nvalues",
-            Self::SimilarPalette => "Similar\npalette",
-            Self::SearchWeb => "Search\nweb",
-            Self::Palette => "Extract\npalette",
-            Self::StudyView => "Study\nview",
-            Self::Guide => "Guide",
-            Self::Crop => "Crop",
-            Self::Note => "Note",
+            Self::SimilarValues => tr("Similar\nvalues"),
+            Self::SimilarPalette => tr("Similar\npalette"),
+            Self::SearchWeb => tr("Search\nweb"),
+            Self::Palette => tr("Extract\npalette"),
+            Self::StudyView => tr("Study\nview"),
+            Self::Guide => tr("Guide"),
+            Self::Crop => tr("Crop"),
+            Self::Note => tr("Note"),
         }
     }
 }
@@ -196,6 +197,8 @@ pub struct CoreBoardApp {
     animations: bool,
     minimap: bool,
     check_updates: bool,
+    /// "auto", "en" or "es".
+    language: String,
     updates: updates::Updates,
     /// The image open in focus view.
     focus: Option<focus::Focus>,
@@ -230,8 +233,10 @@ pub struct CoreBoardApp {
     thumb_rx: Receiver<Thumb>,
     fetch_tx: Sender<Fetched>,
     fetch_rx: Receiver<Fetched>,
-    title_tx: Sender<cards::Titled>,
-    title_rx: Receiver<cards::Titled>,
+    preview_tx: Sender<cards::Previewed>,
+    preview_rx: Receiver<cards::Previewed>,
+    /// Link cards whose preview was already asked for: (board generation, card id).
+    preview_asked: HashSet<(u64, u64)>,
     /// The "add a link" box (Ctrl+click on an empty spot).
     link_prompt: Option<cards::LinkPrompt>,
     /// Web links being downloaded.
@@ -261,7 +266,7 @@ impl CoreBoardApp {
         let (find_tx, find_rx) = channel();
         let (thumb_tx, thumb_rx) = channel();
         let (fetch_tx, fetch_rx) = channel();
-        let (title_tx, title_rx) = channel();
+        let (preview_tx, preview_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty() && store.unreadable.is_none();
         Self {
@@ -288,6 +293,7 @@ impl CoreBoardApp {
             animations: boards::settings().animations,
             minimap: boards::settings().minimap,
             check_updates: boards::settings().check_updates,
+            language: boards::settings().language,
             updates: updates::Updates::default(),
             focus: None,
             editing: None,
@@ -314,8 +320,9 @@ impl CoreBoardApp {
             thumb_rx,
             fetch_tx,
             fetch_rx,
-            title_tx,
-            title_rx,
+            preview_tx,
+            preview_rx,
+            preview_asked: HashSet::new(),
             link_prompt: None,
             fetching: 0,
             show_tags: false,
@@ -443,7 +450,7 @@ impl CoreBoardApp {
             .count();
         let kept = self.selection.len() - doomed;
         if kept > 0 {
-            self.toast(format!("{kept} locked item(s) kept · unlock with L"));
+            self.toast(trf("{} locked item(s) kept · unlock with L", &[&kept]));
         }
         if doomed == 0 {
             return;
@@ -514,7 +521,7 @@ impl CoreBoardApp {
     /// Steps the study view of the selection, starting from the first selected item's view.
     fn cycle_analysis(&mut self, forward: bool) {
         let Some(current) = self.first_selected().map(|i| i.analysis) else {
-            self.toast("Select images first".into());
+            self.toast(tr("Select images first").into());
             return;
         };
         let next = board::cycle(&Analysis::CYCLE, current, forward);
@@ -524,7 +531,7 @@ impl CoreBoardApp {
 
     fn cycle_guide(&mut self) {
         let Some(current) = self.first_selected().map(|i| i.guide) else {
-            self.toast("Select images first".into());
+            self.toast(tr("Select images first").into());
             return;
         };
         let next = board::cycle(&Guide::CYCLE, current, true);
@@ -534,14 +541,14 @@ impl CoreBoardApp {
 
     fn turn_spiral(&mut self) {
         if self.first_selected().is_none() {
-            self.toast("Select images first".into());
+            self.toast(tr("Select images first").into());
             return;
         }
         self.set_on_selection(|i| {
             i.guide = Guide::GoldenSpiral;
             i.guide_orientation = (i.guide_orientation + 1) % 4;
         });
-        self.toast("Golden spiral turned".into());
+        self.toast(tr("Golden spiral turned").into());
     }
 
     /// The first selected image (study views and guides only apply to images).
@@ -598,9 +605,10 @@ impl CoreBoardApp {
         let (h, s, v) = filters::hsv(r, g, b);
         let l = filters::lightness(r, g, b);
         let text = format!(
-            "#{r:02X}{g:02X}{b:02X}\nH {h:.0}°  S {:.0}%  V {:.0}%\nValue (L*) {l:.0}",
+            "#{r:02X}{g:02X}{b:02X}\nH {h:.0}°  S {:.0}%  V {:.0}%\n{} (L*) {l:.0}",
             s * 100.0,
-            v * 100.0
+            v * 100.0,
+            tr("Value")
         );
         let galley = painter.layout_no_wrap(text, FontId::monospace(13.0), Color32::WHITE);
         let swatch = Vec2::splat(galley.size().y);
@@ -667,9 +675,9 @@ impl CoreBoardApp {
         }
         let n = self.selection.len();
         self.toast(if n == 1 {
-            "Duplicated".into()
+            tr("Duplicated").into()
         } else {
-            format!("Duplicated {n} items")
+            trf("Duplicated {} items", &[&n])
         });
         self.touch();
     }
@@ -679,9 +687,9 @@ impl CoreBoardApp {
         self.board_values = (self.board_values + 1) % 3;
         self.toast(
             match self.board_values {
-                1 => "Values: whole board in grayscale",
-                2 => "Values: whole board in 3 tones",
-                _ => "Back to color",
+                1 => tr("Values: whole board in grayscale"),
+                2 => tr("Values: whole board in 3 tones"),
+                _ => tr("Back to color"),
             }
             .into(),
         );
@@ -715,7 +723,7 @@ impl CoreBoardApp {
             .map(|i| (i.id, self.store.image_path(&i.file), i.crop))
             .collect();
         if sources.is_empty() {
-            self.toast("Select images to extract colors from".into());
+            self.toast(tr("Select images to extract colors from").into());
             return;
         }
         let generation = self.generation;
@@ -735,7 +743,7 @@ impl CoreBoardApp {
                 let _ = tx.send((generation, id, result));
             });
         }
-        self.toast("Extracting colors…".into());
+        self.toast(tr("Extracting colors…").into());
     }
 
     fn receive_palettes(&mut self) {
@@ -748,7 +756,7 @@ impl CoreBoardApp {
                 Ok(colors) if !colors.is_empty() => colors,
                 Ok(_) => continue,
                 Err(err) => {
-                    self.toast(format!("Color extraction failed: {err}"));
+                    self.toast(trf("Color extraction failed: {}", &[&err]));
                     continue;
                 }
             };
@@ -782,7 +790,7 @@ impl CoreBoardApp {
 
     fn toggle_crop_mode(&mut self) {
         if self.crop_mode.take().is_some() {
-            self.toast("Crop done".into());
+            self.toast(tr("Crop done").into());
             return;
         }
         let id = self.selection.iter().next().copied();
@@ -790,11 +798,11 @@ impl CoreBoardApp {
             .and_then(|id| self.board.items.iter().find(|i| i.id == id))
             .is_some_and(|i| i.is_image() && i.movable());
         if self.selection.len() != 1 || !is_image {
-            self.toast("Select one image to crop".into());
+            self.toast(tr("Select one image to crop").into());
             return;
         }
         self.crop_mode = id;
-        self.toast("Drag over the image to crop · Enter/Esc when done · Shift+X resets".into());
+        self.toast(tr("Drag over the image to crop · Enter/Esc when done · Shift+X resets").into());
     }
 
     /// Where the whole, uncropped image sits on screen for an item showing only its crop.
@@ -851,7 +859,7 @@ impl CoreBoardApp {
                 item.size = [full.width() / zoom, full.height() / zoom];
             }
         }
-        self.toast("Crop reset".into());
+        self.toast(tr("Crop reset").into());
         self.touch();
     }
 
@@ -1034,7 +1042,7 @@ impl CoreBoardApp {
             pos: [rect.min.x, rect.min.y],
             size: [rect.width(), rect.height()],
             kind: Kind::Frame {
-                title: "Untitled".into(),
+                title: tr("Untitled").into(),
             },
             ..Item::default()
         });
@@ -1194,9 +1202,9 @@ impl CoreBoardApp {
                 };
                 let edit = if centered {
                     edit.align(Align2::CENTER_TOP)
-                        .hint_text("Name this slot, e.g. Front view")
+                        .hint_text(tr("Name this slot, e.g. Front view"))
                 } else if is_image {
-                    edit.hint_text("Add a caption, e.g. Sargent, 1885, rim light")
+                    edit.hint_text(tr("Add a caption, e.g. Sargent, 1885, rim light"))
                 } else {
                     edit
                 };
@@ -1255,7 +1263,7 @@ impl CoreBoardApp {
         {
             let (bytes, path) = sources.remove(0);
             if !self.fill_slot_with_bytes(slot, &bytes, path) {
-                self.toast("That file isn't an image I can read".into());
+                self.toast(tr("That file isn't an image I can read").into());
             }
         }
         let mut added = 0;
@@ -1314,7 +1322,7 @@ impl CoreBoardApp {
             self.add_file_cards(canvas, at, unreadable);
         }
         if failed > 0 {
-            self.toast("That isn't a picture I can read".into());
+            self.toast(tr("That isn't a picture I can read").into());
         }
     }
 
@@ -1363,7 +1371,7 @@ impl CoreBoardApp {
             .filter(|p| p.exists())
             .collect();
         if paths.is_empty() {
-            self.toast("Clipboard has no image".into());
+            self.toast(tr("Clipboard has no image").into());
             return;
         }
         let (pictures, others): (Vec<_>, Vec<_>) =
@@ -1381,7 +1389,7 @@ impl CoreBoardApp {
         let generation = self.generation;
         let world = self.to_world(canvas, at);
         self.fetching += 1;
-        self.toast("Downloading picture…".into());
+        self.toast(tr("Downloading picture…").into());
         std::thread::spawn(move || {
             let result = crate::web::fetch_image(&url);
             let _ = tx.send((generation, world, url, result));
@@ -1409,7 +1417,7 @@ impl CoreBoardApp {
                 }
                 Err(err) => {
                     eprintln!("coreboard: {url}: {err}");
-                    self.toast(format!("Couldn't get that picture: {err}"));
+                    self.toast(trf("Couldn't get that picture: {}", &[&err]));
                 }
             }
         }
@@ -1464,31 +1472,31 @@ impl CoreBoardApp {
             return;
         }
         let count = if self.selection.is_empty() {
-            format!("all {} images", self.board.items.len())
+            trf("all {} images", &[&self.board.items.len()])
         } else {
-            format!("{} selected image(s)", self.selection.len())
+            trf("{} selected image(s)", &[&self.selection.len()])
         };
         let mut export = false;
         let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
-        egui::Window::new("Export PNG")
+        egui::Window::new(tr("Export PNG"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label(format!("Exports {count} as one PNG."));
+                ui.label(trf("Exports {} as one PNG.", &[&count]));
                 ui.add_space(6.0);
                 let wm = &mut self.board.watermark;
-                ui.label("Watermark text (leave empty for none):");
+                ui.label(tr("Watermark text (leave empty for none):"));
                 let field = ui.add(
                     egui::TextEdit::singleline(&mut wm.text)
-                        .hint_text("e.g. © Your Name")
+                        .hint_text(tr("e.g. © Your Name"))
                         .desired_width(260.0),
                 );
                 if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     export = true;
                 }
                 ui.horizontal(|ui| {
-                    ui.label("Position");
+                    ui.label(tr("Position"));
                     egui::ComboBox::from_id_salt("watermark-position")
                         .selected_text(wm.position.label())
                         .show_ui(ui, |ui| {
@@ -1498,7 +1506,7 @@ impl CoreBoardApp {
                         });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Opacity");
+                    ui.label(tr("Opacity"));
                     let mut percent = (wm.opacity * 100.0).round();
                     ui.add(egui::Slider::new(&mut percent, 10.0..=100.0).suffix("%"));
                     wm.opacity = percent / 100.0;
@@ -1506,30 +1514,30 @@ impl CoreBoardApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let label = if self.exporting {
-                        "Exporting…"
+                        tr("Exporting…")
                     } else {
-                        "Export"
+                        tr("Export")
                     };
                     export |= ui
                         .add_enabled(!self.exporting, egui::Button::new(label))
                         .clicked();
-                    close |= ui.button("Cancel").clicked();
+                    close |= ui.button(tr("Cancel")).clicked();
                 });
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format!("Saved to {}", self.export_dir().display()))
+                        egui::RichText::new(trf("Saved to {}", &[&self.export_dir().display()]))
                             .small()
                             .weak(),
                     );
-                    if ui.small_button("Change…").clicked()
+                    if ui.small_button(tr("Change…")).clicked()
                         && let Some(dir) = rfd::FileDialog::new()
-                            .set_title("Folder for exports")
+                            .set_title(tr("Folder for exports"))
                             .set_directory(self.export_dir())
                             .pick_folder()
                     {
                         self.board.export_dir = Some(dir);
                     }
-                    if self.board.export_dir.is_some() && ui.small_button("Reset").clicked() {
+                    if self.board.export_dir.is_some() && ui.small_button(tr("Reset")).clicked() {
                         self.board.export_dir = None;
                     }
                 });
@@ -1560,7 +1568,7 @@ impl CoreBoardApp {
         let watermark = self.board.watermark.clone();
         let tx = self.exported_tx.clone();
         self.exporting = true;
-        self.toast("Exporting…".into());
+        self.toast(tr("Exporting…").into());
         std::thread::spawn(move || {
             let _ = tx.send(export::export_png(
                 &images_dir,
@@ -1582,8 +1590,8 @@ impl CoreBoardApp {
         if let Ok(result) = self.exported_rx.try_recv() {
             self.exporting = false;
             match result {
-                Ok(path) => self.toast(format!("Exported {}", path.display())),
-                Err(err) => self.toast(format!("Export failed: {err}")),
+                Ok(path) => self.toast(trf("Exported {}", &[&path.display()])),
+                Err(err) => self.toast(trf("Export failed: {}", &[&err])),
             }
         }
     }
@@ -1684,7 +1692,7 @@ impl CoreBoardApp {
     /// Opens the Find window for the first selected image and starts ranking the library.
     fn open_finder(&mut self, mode: FindMode) {
         let Some(item) = self.first_selected() else {
-            self.toast("Select an image to find more like it".into());
+            self.toast(tr("Select an image to find more like it").into());
             return;
         };
         let (query, file) = (item.id, item.file.clone());
@@ -1707,7 +1715,7 @@ impl CoreBoardApp {
                     .contains_rect(world)
             })
             .map(|(_, t)| t.clone())
-            .filter(|t| t != "Untitled")
+            .filter(|t| t != "Untitled" && t != tr("Untitled"))
             .or_else(|| (!item_tags.is_empty()).then(|| item_tags.join(" ")))
             .or_else(|| self.finder.as_ref().map(|f| f.subject.clone()))
             .unwrap_or_default();
@@ -1785,7 +1793,7 @@ impl CoreBoardApp {
         };
         let mut open = true;
         let mut add: Option<std::path::PathBuf> = None;
-        egui::Window::new("Find more")
+        egui::Window::new(tr("Find more"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1793,9 +1801,9 @@ impl CoreBoardApp {
             .anchor(Align2::RIGHT_TOP, vec2(-12.0, 12.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut finder.mode, FindMode::Values, "Similar values");
-                    ui.selectable_value(&mut finder.mode, FindMode::Palette, "Similar palette");
-                    ui.selectable_value(&mut finder.mode, FindMode::Web, "Search the web");
+                    ui.selectable_value(&mut finder.mode, FindMode::Values, tr("Similar values"));
+                    ui.selectable_value(&mut finder.mode, FindMode::Palette, tr("Similar palette"));
+                    ui.selectable_value(&mut finder.mode, FindMode::Web, tr("Search the web"));
                 });
                 ui.separator();
                 match finder.mode {
@@ -1816,13 +1824,14 @@ impl CoreBoardApp {
     /// The ranked thumbnails. Returns a result the user clicked, to copy onto this board.
     fn finder_results(&mut self, ui: &mut egui::Ui, finder: &Finder) -> Option<std::path::PathBuf> {
         let what = if finder.mode == FindMode::Values {
-            "value structure"
+            tr("value structure")
         } else {
-            "colors"
+            tr("colors")
         };
         ui.label(
-            egui::RichText::new(format!(
-                "Images on your other boards ranked by {what}. Click one to copy it here."
+            egui::RichText::new(trf(
+                "Images on your other boards ranked by {}. Click one to copy it here.",
+                &[&what],
             ))
             .small()
             .weak(),
@@ -1831,19 +1840,19 @@ impl CoreBoardApp {
             None => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Scanning your boards…");
+                    ui.label(tr("Scanning your boards…"));
                 });
                 return None;
             }
             Some(Err(err)) => {
-                ui.label(format!("Couldn't read this image: {err}"));
+                ui.label(trf("Couldn't read this image: {}", &[&err]));
                 return None;
             }
             Some(Ok(matches)) if matches.is_empty() => {
-                ui.label(
+                ui.label(tr(
                     "No images on your other boards yet. Make more boards with Ctrl+O and drop \
                      references in; they'll show up here.",
-                );
+                ));
                 return None;
             }
             Some(Ok(matches)) => matches,
@@ -1877,9 +1886,9 @@ impl CoreBoardApp {
                                     None => ui.add_sized(size, egui::Spinner::new()),
                                 };
                                 if response
-                                    .on_hover_text(format!(
+                                    .on_hover_text(trf(
                                         "From {}\nClick to copy onto this board",
-                                        boards::display_name(&m.board)
+                                        &[&boards::display_name(&m.board)],
                                     ))
                                     .clicked()
                                 {
@@ -1905,25 +1914,25 @@ impl CoreBoardApp {
 
     fn finder_web(&mut self, ui: &mut egui::Ui, finder: &mut Finder) {
         ui.label(
-            egui::RichText::new("Opens an image search in your browser.")
+            egui::RichText::new(tr("Opens an image search in your browser."))
                 .small()
                 .weak(),
         );
         ui.add(
             egui::TextEdit::singleline(&mut finder.subject)
-                .hint_text("Subject, e.g. oak tree at dusk")
+                .hint_text(tr("Subject, e.g. oak tree at dusk"))
                 .desired_width(340.0),
         );
         let tone = finder.tone.unwrap_or(Tone::Color(finder.suggested));
         let label = |t: Tone| match t {
-            Tone::Any => "Any color".to_string(),
-            Tone::BlackAndWhite => "Black & white".to_string(),
-            Tone::Color(c) if c == finder.suggested => format!("{c} (from this image)"),
+            Tone::Any => tr("Any color").to_string(),
+            Tone::BlackAndWhite => tr("Black & white").to_string(),
+            Tone::Color(c) if c == finder.suggested => trf("{} (from this image)", &[&c]),
             Tone::Color(c) => c.to_string(),
         };
         let mut chosen = tone;
         ui.horizontal(|ui| {
-            ui.label("Color");
+            ui.label(tr("Color"));
             egui::ComboBox::from_id_salt("web-tone")
                 .selected_text(label(tone))
                 .show_ui(ui, |ui| {
@@ -1961,7 +1970,7 @@ impl CoreBoardApp {
         });
         if !ready {
             ui.label(
-                egui::RichText::new("Type a subject to search.")
+                egui::RichText::new(tr("Type a subject to search."))
                     .small()
                     .weak(),
             );
@@ -1971,7 +1980,7 @@ impl CoreBoardApp {
     /// Copies a library image onto this board, next to the image it was found from.
     fn add_from_library(&mut self, canvas: Rect, query: u64, path: &Path) {
         let Ok(bytes) = std::fs::read(path) else {
-            self.toast(format!("Can't read {}", path.display()));
+            self.toast(trf("Can't read {}", &[&path.display()]));
             return;
         };
         let at = self
@@ -2006,7 +2015,7 @@ impl CoreBoardApp {
             .dir
             .canonicalize()
             .unwrap_or_else(|_| self.store.dir.clone());
-        egui::Window::new("Boards")
+        egui::Window::new(tr("Boards"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -2019,17 +2028,17 @@ impl CoreBoardApp {
                 );
                 ui.separator();
 
-                ui.label("New board");
+                ui.label(tr("New board"));
                 ui.horizontal(|ui| {
                     let field = ui.add(
                         egui::TextEdit::singleline(&mut self.new_board_name)
-                            .hint_text("Name, e.g. Character refs")
+                            .hint_text(tr("Name, e.g. Character refs"))
                             .desired_width(220.0),
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     let name = boards::folder_name(&self.new_board_name);
                     if (ui
-                        .add_enabled(name.is_some(), egui::Button::new("Create"))
+                        .add_enabled(name.is_some(), egui::Button::new(tr("Create")))
                         .clicked()
                         || enter)
                         && let Some(name) = name
@@ -2037,19 +2046,19 @@ impl CoreBoardApp {
                         open = Some(boards::boards_root().join(name));
                     }
                 });
-                if ui.button("Open or create in a folder…").clicked()
+                if ui.button(tr("Open or create in a folder…")).clicked()
                     && let Some(dir) = rfd::FileDialog::new()
-                        .set_title("Board folder")
+                        .set_title(tr("Board folder"))
                         .pick_folder()
                 {
                     open = Some(dir);
                 }
                 ui.separator();
 
-                ui.label("Recent");
+                ui.label(tr("Recent"));
                 let others: Vec<_> = self.recent.iter().filter(|p| **p != current).collect();
                 if others.is_empty() {
-                    ui.label(egui::RichText::new("No other boards yet").weak());
+                    ui.label(egui::RichText::new(tr("No other boards yet")).weak());
                 }
                 for dir in others {
                     let response = ui
@@ -2063,15 +2072,17 @@ impl CoreBoardApp {
                 self.watch_controls(ui);
                 ui.separator();
                 let animations = ui
-                    .checkbox(&mut self.animations, "Animations")
-                    .on_hover_text("Glides, pops, swing and flicks. Turn off for a still board.")
+                    .checkbox(&mut self.animations, tr("Animations"))
+                    .on_hover_text(tr(
+                        "Glides, pops, swing and flicks. Turn off for a still board.",
+                    ))
                     .changed();
                 let minimap = ui
-                    .checkbox(&mut self.minimap, "Mini-map")
-                    .on_hover_text(
+                    .checkbox(&mut self.minimap, tr("Mini-map"))
+                    .on_hover_text(tr(
                         "An overview of the whole board in the corner, while part of it is off \
                          screen. Click or drag in it to go there.",
-                    )
+                    ))
                     .changed();
                 if animations || minimap {
                     self.save_settings();
@@ -2081,7 +2092,7 @@ impl CoreBoardApp {
                 }
                 self.update_controls(ui);
                 ui.add_space(6.0);
-                close |= ui.button("Close").clicked();
+                close |= ui.button(tr("Close")).clicked();
             });
         if let Some(dir) = open {
             self.switch_board(ctx, dir);
@@ -2097,7 +2108,7 @@ impl CoreBoardApp {
         let mut store = match Store::open(dir.clone()) {
             Ok(store) => store,
             Err(err) => {
-                self.toast(format!("Can't open {}: {err}", dir.display()));
+                self.toast(trf("Can't open {}: {}", &[&dir.display(), &err]));
                 return;
             }
         };
@@ -2132,7 +2143,7 @@ impl CoreBoardApp {
             env!("CARGO_PKG_VERSION"),
             self.store.dir.display()
         )));
-        self.toast(format!("Opened {}", boards::display_name(&self.store.dir)));
+        self.toast(trf("Opened {}", &[&boards::display_name(&self.store.dir)]));
     }
 
     // ---------------------------------------------------------------- persistence
@@ -2140,7 +2151,7 @@ impl CoreBoardApp {
     fn save_now(&mut self) {
         match self.store.save(&self.board) {
             Ok(()) => self.dirty_since = None,
-            Err(err) => self.toast(format!("Save failed: {err}")),
+            Err(err) => self.toast(trf("Save failed: {}", &[&err])),
         }
     }
 
@@ -2248,7 +2259,7 @@ impl CoreBoardApp {
                     Key::O if m.command => self.open_boards_window(),
                     Key::S if m.command => {
                         self.save_now();
-                        self.toast("Saved".into());
+                        self.toast(tr("Saved").into());
                     }
                     Key::F | Key::Home => self.fit(canvas),
                     Key::R if !m.command => self.rotate_selection(if m.shift { -1 } else { 1 }),
@@ -2276,24 +2287,39 @@ impl CoreBoardApp {
                     Key::Escape if self.draw_mode => self.toggle_draw_mode(),
                     Key::D if !m.command && m.shift => {
                         self.show_marks = !self.show_marks;
-                        let state = if self.show_marks { "shown" } else { "hidden" };
-                        self.toast(format!("Drawings {state}"));
+                        self.toast(
+                            if self.show_marks {
+                                tr("Drawings shown")
+                            } else {
+                                tr("Drawings hidden")
+                            }
+                            .into(),
+                        );
                     }
                     Key::D if !m.command => self.toggle_draw_mode(),
                     Key::I if !m.command => {
                         self.picker = !self.picker;
-                        let state = if self.picker {
-                            "on: hover an image"
-                        } else {
-                            "off"
-                        };
-                        self.toast(format!("Color picker {state}"));
+                        self.toast(
+                            if self.picker {
+                                tr("Color picker on: hover an image")
+                            } else {
+                                tr("Color picker off")
+                            }
+                            .into(),
+                        );
                     }
                     Key::T if !m.command => {
                         let on = !self.board.window.always_on_top;
                         self.board.window.always_on_top = on;
                         self.window_level_sent = false;
-                        self.toast(format!("Always on top: {}", if on { "on" } else { "off" }));
+                        self.toast(
+                            if on {
+                                tr("Always on top: on")
+                            } else {
+                                tr("Always on top: off")
+                            }
+                            .into(),
+                        );
                         self.touch();
                     }
                     Key::OpenBracket | Key::CloseBracket => {
@@ -2301,7 +2327,10 @@ impl CoreBoardApp {
                         // Round to whole steps so repeated presses land on 10%, 20%, ...
                         let opacity = ((self.board.window.opacity + step) * 10.0).round() / 10.0;
                         self.board.window.opacity = opacity.clamp(0.1, 1.0);
-                        self.toast(format!("Opacity {:.0}%", self.board.window.opacity * 100.0));
+                        self.toast(trf(
+                            "Opacity {}%",
+                            &[&(self.board.window.opacity * 100.0).round()],
+                        ));
                         self.touch();
                     }
                     Key::Num1 if !m.command => {
@@ -2711,8 +2740,16 @@ impl CoreBoardApp {
                     continue;
                 }
                 Kind::File { .. } | Kind::Link { .. } => {
+                    let preview = if item.file.is_empty() {
+                        None
+                    } else {
+                        match self.texture(&ctx, &item.file, Filter::Plain) {
+                            Texture::Ready(tex) => Some((tex.id(), tex.size_vec2())),
+                            _ => None,
+                        }
+                    };
                     if let Some(face) = item.kind.card_face() {
-                        draw_card(&painter, rect, &face, opacity);
+                        draw_card(&painter, rect, &face, opacity, preview);
                     }
                     if selected {
                         draw_selection(&painter, rect, handle);
@@ -2843,9 +2880,9 @@ impl CoreBoardApp {
             );
             let label = match &slot.kind {
                 Kind::Placeholder { label } if !label.trim().is_empty() => {
-                    format!("Drop to fill “{}”", label.trim())
+                    trf("Drop to fill “{}”", &[&label.trim()])
                 }
-                _ => "Drop to fill this slot".to_string(),
+                _ => tr("Drop to fill this slot").to_string(),
             };
             let galley = painter.layout_no_wrap(label, FontId::proportional(13.0), Color32::WHITE);
             let pos = rect.center_top() - vec2(galley.size().x / 2.0, galley.size().y + 12.0);
@@ -2898,7 +2935,7 @@ impl CoreBoardApp {
             painter.text(
                 canvas.center(),
                 Align2::CENTER_CENTER,
-                "Drop images or files here, paste with Ctrl+V, or press N for a note",
+                tr("Drop images or files here, paste with Ctrl+V, or press N for a note"),
                 FontId::proportional(22.0),
                 Color32::from_gray(120),
             );
@@ -2906,31 +2943,31 @@ impl CoreBoardApp {
 
         // Status line.
         let status = format!(
-            "{:.0}%  ·  {} items{}{}{}",
+            "{:.0}%  ·  {}{}{}{}",
             zoom * 100.0,
-            self.board.items.len(),
+            trf("{} items", &[&self.board.items.len()]),
             if opacity < 1.0 {
-                format!("  ·  opacity {:.0}%", opacity * 100.0)
+                format!("  ·  {}", trf("opacity {}%", &[&(opacity * 100.0).round()]))
             } else {
                 String::new()
             },
             if self.board.window.always_on_top {
-                "  ·  on top"
+                format!("  ·  {}", tr("on top"))
             } else if self.draw_mode {
-                "  ·  DRAW: drag on an image, Esc when done"
+                format!("  ·  {}", tr("DRAW: drag on an image, Esc when done"))
             } else if self.board_values == 1 {
-                "  ·  VALUES: whole board in grayscale (Shift+B)"
+                format!("  ·  {}", tr("VALUES: whole board in grayscale (Shift+B)"))
             } else if self.board_values == 2 {
-                "  ·  VALUES: whole board in 3 tones (Shift+B)"
+                format!("  ·  {}", tr("VALUES: whole board in 3 tones (Shift+B)"))
             } else if self.crop_mode.is_some() {
-                "  ·  CROP: drag over the image, Enter when done"
+                format!("  ·  {}", tr("CROP: drag over the image, Enter when done"))
             } else {
-                ""
+                String::new()
             },
             if self.selection.is_empty() {
                 String::new()
             } else {
-                format!("  ·  {} selected", self.selection.len())
+                format!("  ·  {}", trf("{} selected", &[&self.selection.len()]))
             },
         );
         painter.text(
@@ -3027,7 +3064,8 @@ impl eframe::App for CoreBoardApp {
         self.receive_finds();
         self.receive_thumbs(&ctx);
         self.receive_fetches(&ctx, canvas);
-        self.receive_titles();
+        self.request_previews();
+        self.receive_previews();
         self.receive_updates(&ctx);
         self.receive_exports();
         self.receive_palettes();
@@ -3089,7 +3127,7 @@ fn draw_note(
         return; // Too small to read; the card alone shows where it is.
     }
     let (shown, ink) = if text.trim().is_empty() {
-        ("Empty note", rgb(ink).gamma_multiply(0.45))
+        (tr("Empty note"), rgb(ink).gamma_multiply(0.45))
     } else {
         (text, rgb(ink))
     };
@@ -3543,8 +3581,8 @@ fn paint_help(painter: &egui::Painter, canvas: Rect) {
                 (0.0f32, 0.0f32),
                 |(k, d), (key, desc)| {
                     (
-                        k.max(key_galley(key).size().x),
-                        d.max(text_galley(desc).size().x),
+                        k.max(key_galley(tr(key)).size().x),
+                        d.max(text_galley(tr(desc)).size().x),
                     )
                 },
             )
@@ -3552,7 +3590,11 @@ fn paint_help(painter: &egui::Painter, canvas: Rect) {
         .collect();
     let total_w: f32 = widths.iter().map(|(k, d)| k + 14.0 + d).sum::<f32>()
         + COLUMN_GAP * (columns.len() as f32 - 1.0);
-    let title = format!("Core Board {}  ·  shortcuts", env!("CARGO_PKG_VERSION"));
+    let title = format!(
+        "Core Board {}  ·  {}",
+        env!("CARGO_PKG_VERSION"),
+        tr("shortcuts")
+    );
     let title_galley = painter.layout_no_wrap(title, FontId::proportional(15.0), Color32::WHITE);
     let total_h = columns
         .iter()
@@ -3574,16 +3616,16 @@ fn paint_help(painter: &egui::Painter, canvas: Rect) {
             painter.text(
                 pos2(x, y + 4.0),
                 Align2::LEFT_TOP,
-                name.to_uppercase(),
+                tr(name).to_uppercase(),
                 FontId::proportional(11.5),
                 ACCENT,
             );
             y += HEADER;
             for (key, desc) in rows.iter() {
-                painter.galley(pos2(x, y), key_galley(key), Color32::WHITE);
+                painter.galley(pos2(x, y), key_galley(tr(key)), Color32::WHITE);
                 painter.galley(
                     pos2(x + key_w + 14.0, y - 1.0),
-                    text_galley(desc),
+                    text_galley(tr(desc)),
                     Color32::WHITE,
                 );
                 y += ROW;

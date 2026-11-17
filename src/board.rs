@@ -75,12 +75,12 @@ impl MarkShape {
     pub const ALL: [Self; 4] = [Self::Pen, Self::Arrow, Self::Circle, Self::Box];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Pen => "Pen",
             Self::Arrow => "Arrow",
             Self::Circle => "Circle",
             Self::Box => "Box",
-        }
+        })
     }
 }
 
@@ -218,7 +218,7 @@ impl Kind {
                 let (title, subtitle, badge, color) = if *folder {
                     (
                         name,
-                        "Folder".to_string(),
+                        crate::i18n::tr("Folder").to_string(),
                         "DIR".to_string(),
                         [222, 182, 68],
                     )
@@ -241,8 +241,8 @@ impl Kind {
                     let shortcut = matches!(ext.as_str(), "lnk" | "url" | "desktop" | "app");
                     let title = if shortcut { stem } else { name };
                     let subtitle = match ext.as_str() {
-                        "lnk" | "url" | "desktop" => "Shortcut".to_string(),
-                        "exe" | "app" => "App".to_string(),
+                        "lnk" | "url" | "desktop" => crate::i18n::tr("Shortcut").to_string(),
+                        "exe" | "app" => crate::i18n::tr("App").to_string(),
                         _ => p
                             .parent()
                             .and_then(|d| d.file_name())
@@ -489,14 +489,14 @@ impl Analysis {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::None => "Normal view",
             Self::Values3 => "Values: 3 tones",
             Self::Values5 => "Values: 5 tones",
             Self::Saturation => "Saturation map",
             Self::Detail => "Noise / detail map",
             Self::Squint => "Squint (big shapes)",
-        }
+        })
     }
 }
 
@@ -524,14 +524,14 @@ impl Guide {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::None => "No guide",
             Self::Thirds => "Rule of thirds",
             Self::PhiGrid => "Phi grid",
             Self::GoldenSpiral => "Golden spiral",
             Self::Diagonals => "Diagonals + reciprocals",
             Self::Center => "Center cross",
-        }
+        })
     }
 }
 
@@ -601,14 +601,14 @@ impl WatermarkPosition {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::TopLeft => "Top left",
             Self::TopRight => "Top right",
             Self::BottomLeft => "Bottom left",
             Self::BottomRight => "Bottom right",
             Self::Center => "Center",
             Self::Tiled => "Tiled",
-        }
+        })
     }
 }
 
