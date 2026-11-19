@@ -77,6 +77,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
 | Help | **H**, or the **?** button in the top-right corner (✕ closes it) |
+| Radial menu | Hold **Q**: image actions over an image, board actions (note, link, slot, paste, fit, surprise, boards, help) elsewhere |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
 | Fit to view | **F** (fits selection, or everything) |
 | Zoom 100% | **1** |
@@ -234,6 +235,13 @@ your file browser. The file stays where it is: the card is a shortcut to it.
 page's title and its preview picture (the one chat apps show for links). Double-click it to open the page. Pasting a link to a page without a picture also
 makes a link card.
 
+## YouTube videos
+
+Paste a YouTube link (or add one with **Ctrl+click**) and it becomes a video card with the video's
+picture, title and a play button. **Double-click** it to watch: on Windows and macOS a small player
+window opens and floats on top, so the video plays next to your board; on Linux it opens in the
+browser.
+
 ## Paste a web link
 
 Copy a picture's web address (right-click > *Copy image address* in the browser) and press **Ctrl+V**
@@ -340,6 +348,9 @@ from the original files, so the export is full quality with rotation, flip and g
 - **Watermark text**: e.g. `© Your Name`. Leave it empty to export without a watermark.
 - **Position**: any corner, center, or tiled across the whole image.
 - **Opacity**: 10–100%.
+
+When it's done, a message shows the file name until you close it (**✕**); click it or **Open folder**
+to go straight to the file.
 
 The text gets a soft shadow so it reads on light and dark images. Your watermark settings are saved
 with the board. Exports go to the board's `exports/` folder as `coreboard-<date>-<time>.png` (UTC);
