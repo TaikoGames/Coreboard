@@ -21,6 +21,7 @@ use crate::library::{self, Tone};
 mod cards;
 mod draw;
 mod focus;
+mod loupe;
 mod minimap;
 mod motion;
 mod organize;
@@ -196,6 +197,8 @@ pub struct CoreBoardApp {
     motion: motion::Motion,
     animations: bool,
     minimap: bool,
+    /// How much the magnifier (hold Z) enlarges.
+    loupe_power: f32,
     check_updates: bool,
     /// "auto", "en" or "es".
     language: String,
@@ -292,6 +295,7 @@ impl CoreBoardApp {
             motion: motion::Motion::default(),
             animations: boards::settings().animations,
             minimap: boards::settings().minimap,
+            loupe_power: 3.0,
             check_updates: boards::settings().check_updates,
             language: boards::settings().language,
             updates: updates::Updates::default(),
@@ -2352,7 +2356,12 @@ impl CoreBoardApp {
         }
 
         // Zoom: wheel or trackpad pinch, anchored at the cursor.
-        if let Some(pos) = hover.filter(|p| !over_ui(&ctx, *p)) {
+        // (While the magnifier shows, the wheel sets its power instead.)
+        if self.loupe_held(&ctx) {
+            if scroll.y != 0.0 {
+                self.loupe_scroll(scroll.y);
+            }
+        } else if let Some(pos) = hover.filter(|p| !over_ui(&ctx, *p)) {
             let factor = (scroll.y * 0.0025).exp() * pinch;
             if (factor - 1.0).abs() > f32::EPSILON {
                 self.stop_motion();
@@ -3018,6 +3027,7 @@ impl CoreBoardApp {
         self.paint_radial(ctx);
         self.link_prompt_window(ctx, canvas);
         self.minimap(ctx, canvas);
+        self.paint_loupe(ctx, canvas);
         self.update_banner(ctx, canvas);
         self.unreadable_banner(ctx, canvas);
     }
@@ -3515,6 +3525,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "Study",
         &[
             ("V / Shift+V", "value, saturation, noise, squint"),
+            ("Hold Z", "magnifier (scroll to change its zoom)"),
             ("B", "black & white"),
             ("Shift+B", "whole board in values"),
             ("C / Shift+C", "composition guide / turn spiral"),

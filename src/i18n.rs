@@ -568,6 +568,11 @@ const SPANISH: &[(&str, &str)] = &[
     ("color picker (HSV + value)", "cuentagotas (HSV + valor)"),
     ("6 / 10 color palette", "paleta de 6 / 10 colores"),
     ("Hold Q", "Mantener Q"),
+    ("Hold Z", "Mantener Z"),
+    (
+        "magnifier (scroll to change its zoom)",
+        "lupa (la rueda cambia su aumento)",
+    ),
     (
         "radial menu: find similar, web…",
         "menú radial: parecidas, web…",

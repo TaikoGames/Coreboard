@@ -252,6 +252,12 @@ Press **S** for a random image from this board or any of your recent boards, sho
 Great for rediscovering old references or picking a warm-up study. Press **S** again for another;
 a pick from a different board opens that board.
 
+## Magnifier
+
+Hold **Z** to look closer without zooming the board: a round magnifying glass follows the
+pointer and shows the pictures under it enlarged (3× to start). **Scroll** while holding Z to
+change how much it enlarges, from 2× to 8×. Let go of Z and it's gone.
+
 ## Focus view
 
 Press **Enter** to study one image without the rest of the board around it. The selected image (or
