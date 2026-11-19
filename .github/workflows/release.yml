@@ -123,6 +123,9 @@ jobs:
         with:
           name: windows
           path: dist/*
+          # Only needed until the release step picks it up; kept a day so it doesn't use
+          # storage (the release and the website keep the real downloads).
+          retention-days: 1
 
   macos:
     needs: plan
@@ -200,6 +203,9 @@ jobs:
         with:
           name: macos
           path: dist/*
+          # Only needed until the release step picks it up; kept a day so it doesn't use
+          # storage (the release and the website keep the real downloads).
+          retention-days: 1
 
   linux:
     needs: plan
@@ -232,6 +238,9 @@ jobs:
         with:
           name: linux
           path: dist/*
+          # Only needed until the release step picks it up; kept a day so it doesn't use
+          # storage (the release and the website keep the real downloads).
+          retention-days: 1
 
   release:
     needs: [plan, windows, macos, linux]
