@@ -1,4 +1,6 @@
-//! Drawing on images: arrows, circles, boxes and pen strokes that stay attached to the picture.
+//! Drawing: arrows, circles, boxes and pen strokes. A stroke started on a picture sticks to it
+//! (it follows the picture through moves, crops and turns); one started anywhere else becomes
+//! its own drawing object to select, move and delete.
 
 use super::*;
 use crate::board::{MARK_COLORS, MARK_WIDTH, Mark, MarkShape};
@@ -13,7 +15,7 @@ impl CoreBoardApp {
             self.finish_edit();
             self.crop_mode = None;
             self.show_marks = true;
-            self.toast(tr("Draw: drag on an image · Esc or D when done").into());
+            self.toast(tr("Draw: drag anywhere · Esc or D when done").into());
         } else {
             self.toast(tr("Drawing done").into());
         }
@@ -41,8 +43,13 @@ impl CoreBoardApp {
         }
     }
 
-    /// Turns a finished stroke (screen points) into a mark on the item, if it's big enough.
-    pub(super) fn finish_stroke(&mut self, canvas: Rect, item: u64, points: Vec<Pos2>) {
+    /// Turns a finished stroke (screen points) into a mark on the picture it started on, or into
+    /// a drawing object of its own, if it's big enough.
+    pub(super) fn finish_stroke(&mut self, canvas: Rect, item: Option<u64>, points: Vec<Pos2>) {
+        let Some(item) = item else {
+            self.add_drawing(canvas, points);
+            return;
+        };
         let Some(rect) = self
             .board
             .items
@@ -82,18 +89,85 @@ impl CoreBoardApp {
         self.touch();
     }
 
-    /// Removes the drawings from the selected images (or every image, if none is selected).
+    /// A stroke drawn on an empty spot: a new drawing object, just big enough for it.
+    fn add_drawing(&mut self, canvas: Rect, points: Vec<Pos2>) {
+        let extent = points
+            .iter()
+            .fold(Rect::NOTHING, |r, p| r.union(Rect::from_min_max(*p, *p)));
+        if points.len() < 2 || extent.width().max(extent.height()) < 4.0 {
+            return; // A click, not a drawing.
+        }
+        let world: Vec<Pos2> = points.iter().map(|p| self.to_world(canvas, *p)).collect();
+        let points: Vec<Pos2> = match self.draw_tool {
+            MarkShape::Pen => world,
+            _ => vec![world[0], *world.last().expect("two points")],
+        };
+        // Room around the stroke for its width and an arrow's head.
+        let pad = MARK_WIDTH * 4.0;
+        let bounds = points
+            .iter()
+            .fold(Rect::NOTHING, |r, p| r.union(Rect::from_min_max(*p, *p)))
+            .expand(pad);
+        let local = |p: &Pos2| {
+            let q = (*p - bounds.min) / bounds.size();
+            [q.x, q.y]
+        };
+        let mark = Mark {
+            shape: self.draw_tool,
+            points: points.iter().map(local).collect(),
+            color: self.draw_color,
+        };
+        self.checkpoint();
+        let id = self.board.next_id;
+        self.board.next_id += 1;
+        self.board.items.push(Item {
+            id,
+            kind: Kind::Drawing { mark },
+            pos: [bounds.min.x, bounds.min.y],
+            size: [bounds.width(), bounds.height()],
+            ..Item::default()
+        });
+        self.touch();
+    }
+
+    /// Whether `pos` (screen) hits `item`. A drawing only counts near its lines, so a big
+    /// arrow across the board doesn't block clicks on the pictures under it.
+    pub(super) fn item_hit(&self, canvas: Rect, item: &Item, pos: Pos2) -> bool {
+        let rect = self.item_screen_rect(canvas, item);
+        if !rect.contains(pos) {
+            return false;
+        }
+        let Kind::Drawing { mark } = &item.kind else {
+            return true;
+        };
+        let width = (MARK_WIDTH * self.board.view.zoom).clamp(1.5, 24.0);
+        let reach = (width / 2.0 + 6.0).max(8.0);
+        mark.polylines(rect.width(), rect.height(), width)
+            .iter()
+            .any(|line| {
+                let line: Vec<Pos2> = line.iter().map(|[x, y]| rect.min + vec2(*x, *y)).collect();
+                line.windows(2)
+                    .any(|w| distance_to_segment(pos, w[0], w[1]) <= reach)
+                    || (line.len() == 1 && line[0].distance(pos) <= reach)
+            })
+    }
+
+    /// Removes the drawings from the selected items (or everywhere, if nothing is selected):
+    /// those on pictures, and drawing objects.
     fn clear_marks(&mut self) {
         let targets = self.targets();
         if !self
             .board
             .items
             .iter()
-            .any(|i| targets.contains(&i.id) && !i.marks.is_empty())
+            .any(|i| targets.contains(&i.id) && (!i.marks.is_empty() || i.is_drawing()))
         {
             return;
         }
         self.checkpoint();
+        self.board
+            .items
+            .retain(|i| !(targets.contains(&i.id) && i.is_drawing()));
         for item in &mut self.board.items {
             if targets.contains(&item.id) {
                 item.marks.clear();
@@ -191,7 +265,14 @@ pub(super) fn item_mark_shapes(
 
 /// Shapes for a mark (points local to `rect`): a dark halo under the colored stroke, so it reads
 /// on light and dark pictures alike.
-fn mark_shapes(rect: Rect, mark: &Mark, zoom: f32, opacity: f32) -> Vec<egui::Shape> {
+/// How far `p` is from the segment `a`-`b`.
+fn distance_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_sq().max(f32::EPSILON)).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+pub(super) fn mark_shapes(rect: Rect, mark: &Mark, zoom: f32, opacity: f32) -> Vec<egui::Shape> {
     let width = (MARK_WIDTH * zoom).clamp(1.5, 24.0);
     let [r, g, b] = MARK_COLORS[mark.color as usize % MARK_COLORS.len()];
     let color = Color32::from_rgb(r, g, b).gamma_multiply(opacity);

@@ -11,10 +11,12 @@ const GLIDE: Duration = Duration::from_millis(240);
 const POP: Duration = Duration::from_millis(320);
 /// How long the view takes to fly to a new framing (fit, zoom 100%).
 const VIEW: Duration = Duration::from_millis(280);
-/// Releasing a drag faster than this (screen points per second) flicks it.
-const FLICK_SPEED: f32 = 450.0;
-/// How quickly a flick slows down (per second, exponential).
-const FRICTION: f32 = 5.5;
+/// Releasing a drag faster than this (screen points per second) flicks it: only a deliberate,
+/// fast throw, so ordinary drags stop where they're let go.
+const FLICK_SPEED: f32 = 1600.0;
+/// How quickly a flick slows down (per second, exponential): it settles in a short distance
+/// instead of sliding like on ice.
+const FRICTION: f32 = 13.0;
 /// Strongest tilt while swinging an image around, in radians (about 6°).
 const MAX_TILT: f32 = 0.11;
 

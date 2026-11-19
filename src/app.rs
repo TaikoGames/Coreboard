@@ -29,7 +29,7 @@ mod slots;
 mod updates;
 mod watch;
 use cards::draw_card;
-use draw::{item_mark_shapes, preview_mark};
+use draw::{item_mark_shapes, mark_shapes, preview_mark};
 use organize::Align;
 use slots::{draw_placeholder, placeholder_label_rect};
 
@@ -163,9 +163,9 @@ enum Drag {
     Crop {
         start: Pos2,
     },
-    /// Drawing a mark on an image (screen points so far).
+    /// Drawing a mark (screen points so far): on the image it started on, or a new drawing.
     Draw {
-        item: u64,
+        item: Option<u64>,
         points: Vec<Pos2>,
     },
 }
@@ -213,6 +213,8 @@ pub struct CoreBoardApp {
     /// Screen area of the text editor, where the board ignores presses.
     edit_rect: Option<Rect>,
     show_help: bool,
+    /// Where the help panel was drawn last frame, to put its close button on it.
+    help_rect: Option<Rect>,
     /// The OS window level is sent once on startup, then on each toggle.
     window_level_sent: bool,
     show_export: bool,
@@ -305,6 +307,7 @@ impl CoreBoardApp {
             edit_focus_pending: false,
             edit_rect: None,
             show_help,
+            help_rect: None,
             window_level_sent: false,
             show_export: false,
             exporting: false,
@@ -590,7 +593,8 @@ impl CoreBoardApp {
             | Kind::Frame { .. }
             | Kind::Placeholder { .. }
             | Kind::File { .. }
-            | Kind::Link { .. } => return None,
+            | Kind::Link { .. }
+            | Kind::Drawing { .. } => return None,
         }
         let sample = self.samples.get(&item.file)?;
         let s = (pos - rect.min) / rect.size();
@@ -947,13 +951,13 @@ impl CoreBoardApp {
             .iter()
             .rev()
             .filter(pinned)
-            .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+            .find(|i| self.item_hit(canvas, i, pos))
             .or_else(|| {
                 items
                     .iter()
                     .rev()
                     .filter(|i| !i.is_frame() && i.pinned.is_none())
-                    .find(|i| self.item_screen_rect(canvas, i).contains(pos))
+                    .find(|i| self.item_hit(canvas, i, pos))
             })
             .or_else(|| {
                 items
@@ -2407,13 +2411,11 @@ impl CoreBoardApp {
             self.drag = if button != egui::PointerButton::Primary || space {
                 Drag::Pan
             } else if self.draw_mode {
-                // Drag on an image to draw on it; anywhere else pans.
-                match self.drawable_at(canvas, pos) {
-                    Some(item) => Drag::Draw {
-                        item,
-                        points: vec![pos],
-                    },
-                    None => Drag::Pan,
+                // Drawing starts anywhere: on a picture it sticks to it, elsewhere it becomes
+                // its own drawing object.
+                Drag::Draw {
+                    item: self.drawable_at(canvas, pos),
+                    points: vec![pos],
                 }
             } else if self.crop_mode.is_some() {
                 Drag::Crop { start: pos }
@@ -2423,7 +2425,10 @@ impl CoreBoardApp {
                     Kind::Image | Kind::Palette { .. } | Kind::File { .. } | Kind::Link { .. } => {
                         Some(item.size[0] / item.size[1])
                     }
-                    Kind::Note { .. } | Kind::Frame { .. } | Kind::Placeholder { .. } => None,
+                    Kind::Note { .. }
+                    | Kind::Frame { .. }
+                    | Kind::Placeholder { .. }
+                    | Kind::Drawing { .. } => None,
                 };
                 self.checkpoint();
                 Drag::Resize { id, aspect }
@@ -2560,7 +2565,14 @@ impl CoreBoardApp {
             match std::mem::replace(&mut self.drag, Drag::None) {
                 Drag::Move {
                     moved: true, start, ..
-                } => self.release_flick(&ctx, start.into_keys().collect()),
+                } => {
+                    // Only what actually moved can be thrown (locked items stay put; an empty
+                    // list would mean "the board").
+                    let ids: Vec<u64> = start.into_keys().collect();
+                    if !ids.is_empty() {
+                        self.release_flick(&ctx, ids);
+                    }
+                }
                 Drag::Pan => self.release_flick(&ctx, Vec::new()),
                 Drag::Move { moved: false, .. } => {
                     // A plain click: drop the no-op history entry and collapse to one item.
@@ -2748,6 +2760,15 @@ impl CoreBoardApp {
                     }
                     continue;
                 }
+                Kind::Drawing { mark } => {
+                    if self.show_marks {
+                        painter.extend(mark_shapes(rect, mark, zoom, opacity));
+                    }
+                    if selected {
+                        draw_selection(&painter, rect, handle);
+                    }
+                    continue;
+                }
                 Kind::File { .. } | Kind::Link { .. } => {
                     let preview = if item.file.is_empty() {
                         None
@@ -2865,10 +2886,10 @@ impl CoreBoardApp {
             self.draw_tags(&painter, rect, &tags);
         }
         self.paint_snap_lines(&painter, canvas);
-        if let Drag::Draw { item, points } = &self.drag
-            && let Some(target) = self.board.items.iter().find(|i| i.id == *item)
-        {
-            let rect = self.item_screen_rect(canvas, target);
+        if let Drag::Draw { item, points } = &self.drag {
+            let rect = item
+                .and_then(|id| self.board.items.iter().find(|i| i.id == id))
+                .map_or(canvas, |target| self.item_screen_rect(canvas, target));
             painter.extend(preview_mark(
                 rect,
                 self.draw_tool,
@@ -2963,7 +2984,7 @@ impl CoreBoardApp {
             if self.board.window.always_on_top {
                 format!("  ·  {}", tr("on top"))
             } else if self.draw_mode {
-                format!("  ·  {}", tr("DRAW: drag on an image, Esc when done"))
+                format!("  ·  {}", tr("DRAW: drag anywhere, Esc when done"))
             } else if self.board_values == 1 {
                 format!("  ·  {}", tr("VALUES: whole board in grayscale (Shift+B)"))
             } else if self.board_values == 2 {
@@ -2987,9 +3008,7 @@ impl CoreBoardApp {
             Color32::from_gray(140),
         );
 
-        if self.show_help {
-            paint_help(&painter, canvas);
-        }
+        self.help_rect = self.show_help.then(|| paint_help(&painter, canvas));
 
         if let Some((msg, at)) = &self.toast {
             if at.elapsed() < Duration::from_secs(3) {
@@ -3009,6 +3028,33 @@ impl CoreBoardApp {
 }
 
 impl CoreBoardApp {
+    /// A close button on the help panel, and a "?" button to open it when it's closed.
+    fn help_buttons(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let (at, label, tip) = match self.help_rect.filter(|_| self.show_help) {
+            Some(panel) => (
+                panel.right_top() + vec2(-34.0, 6.0),
+                "✕",
+                tr("Close the help (H)"),
+            ),
+            None => (
+                canvas.right_top() + vec2(-46.0, 12.0),
+                "?",
+                tr("Shortcuts and help (H)"),
+            ),
+        };
+        egui::Area::new(egui::Id::unique("coreboard-help-button"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ctx, |ui| {
+                let button = egui::Button::new(egui::RichText::new(label).size(15.0).strong())
+                    .min_size(vec2(28.0, 28.0))
+                    .corner_radius(CornerRadius::same(14));
+                if ui.add(button).on_hover_text(tip).clicked() {
+                    self.show_help = !self.show_help;
+                }
+            });
+    }
+
     /// Editors, toolbars and menus that sit over the board (hidden while focus view is open).
     fn board_overlays(&mut self, ctx: &egui::Context, canvas: Rect) {
         self.edit_overlay(ctx, canvas);
@@ -3027,6 +3073,7 @@ impl CoreBoardApp {
         self.paint_radial(ctx);
         self.link_prompt_window(ctx, canvas);
         self.minimap(ctx, canvas);
+        self.help_buttons(ctx, canvas);
         self.paint_loupe(ctx, canvas);
         self.update_banner(ctx, canvas);
         self.unreadable_banner(ctx, canvas);
@@ -3540,7 +3587,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("N / Shift+N", "new note / note color"),
             ("E", "empty image slot"),
             ("Double-click", "edit a note, frame or slot"),
-            ("D / Shift+D", "draw on images / hide drawings"),
+            ("D / Shift+D", "draw (anywhere) / hide drawings"),
         ],
     ),
     (
@@ -3558,7 +3605,8 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
 
 /// Draws the shortcuts overlay in the top-right corner: sections flow into as many columns
 /// as the window's height needs.
-fn paint_help(painter: &egui::Painter, canvas: Rect) {
+/// Returns the panel's rect, for its close button.
+fn paint_help(painter: &egui::Painter, canvas: Rect) -> Rect {
     const KEY_FONT: f32 = 12.0;
     const ROW: f32 = 18.0;
     const HEADER: f32 = 26.0;
@@ -3645,6 +3693,7 @@ fn paint_help(painter: &egui::Painter, canvas: Rect) {
         }
         x += key_w + 14.0 + desc_w + COLUMN_GAP;
     }
+    bg
 }
 
 /// Whether the file at `path` is a picture, judged by its first bytes (so a big video isn't

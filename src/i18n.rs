@@ -241,6 +241,8 @@ const SPANISH: &[(&str, &str)] = &[
         "Una vista de todo el tablero en la esquina cuando parte de él queda fuera de la pantalla. Haz clic o arrastra en ella para ir allí.",
     ),
     ("Close", "Cerrar"),
+    ("Close the help (H)", "Cerrar la ayuda (H)"),
+    ("Shortcuts and help (H)", "Atajos y ayuda (H)"),
     ("Language", "Idioma"),
     ("Automatic ({})", "Automático ({})"),
     ("Can't open {}: {}", "No se puede abrir {}: {}"),
@@ -269,8 +271,8 @@ const SPANISH: &[(&str, &str)] = &[
     ("opacity {}%", "opacidad {}%"),
     ("on top", "siempre encima"),
     (
-        "DRAW: drag on an image, Esc when done",
-        "DIBUJO: arrastra sobre una imagen, Esc al terminar",
+        "DRAW: drag anywhere, Esc when done",
+        "DIBUJO: arrastra donde quieras, Esc al terminar",
     ),
     (
         "VALUES: whole board in grayscale (Shift+B)",
@@ -313,8 +315,8 @@ const SPANISH: &[(&str, &str)] = &[
     ("App", "Aplicación"),
     // Drawing
     (
-        "Draw: drag on an image · Esc or D when done",
-        "Dibujar: arrastra sobre una imagen · Esc o D al terminar",
+        "Draw: drag anywhere · Esc or D when done",
+        "Dibujar: arrastra donde quieras · Esc o D al terminar",
     ),
     ("Drawing done", "Dibujo terminado"),
     ("Drawings cleared", "Dibujos borrados"),
@@ -586,8 +588,8 @@ const SPANISH: &[(&str, &str)] = &[
         "editar una nota, marco o hueco",
     ),
     (
-        "draw on images / hide drawings",
-        "dibujar en imágenes / ocultar dibujos",
+        "draw (anywhere) / hide drawings",
+        "dibujar (donde sea) / ocultar dibujos",
     ),
     ("Boards & window", "Tableros y ventana"),
     (

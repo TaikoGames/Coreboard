@@ -177,6 +177,10 @@ pub enum Kind {
         #[serde(default)]
         folder: bool,
     },
+    /// A drawing on the board itself (an arrow, circle, box or pen stroke made on an empty
+    /// spot), its own object to select, move, resize or delete. Its points are in 0..1 of the
+    /// item's rect, so it scales with it.
+    Drawing { mark: Mark },
     /// A web page, shown as a card. Double-click opens it in the browser.
     Link {
         url: String,
@@ -337,6 +341,10 @@ impl Item {
     /// A file or link card.
     pub fn is_card(&self) -> bool {
         matches!(self.kind, Kind::File { .. } | Kind::Link { .. })
+    }
+
+    pub fn is_drawing(&self) -> bool {
+        matches!(self.kind, Kind::Drawing { .. })
     }
 
     pub fn is_frame(&self) -> bool {

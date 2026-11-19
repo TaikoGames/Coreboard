@@ -112,6 +112,8 @@ impl CoreBoardApp {
                             let c = colors.first().copied().unwrap_or([120, 120, 120]);
                             painter.rect_filled(r, CornerRadius::ZERO, rgb(c));
                         }
+                        // Too thin to read at this size.
+                        Kind::Drawing { .. } => {}
                         Kind::File { .. } | Kind::Link { .. } => {
                             let c = item.kind.card_face().map_or([120, 120, 130], |f| f.color);
                             painter.rect_filled(r, CornerRadius::ZERO, rgb(c));

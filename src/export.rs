@@ -99,6 +99,10 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 draw_placeholder(&mut canvas, &font, (x, y, w, h), label, scale);
                 continue;
             }
+            Kind::Drawing { mark } => {
+                draw_marks(&mut canvas, (x, y, w, h), std::slice::from_ref(mark), scale);
+                continue;
+            }
             Kind::File { .. } | Kind::Link { .. } => {
                 // A link's preview picture, if it has one.
                 let preview = (!item.file.is_empty())

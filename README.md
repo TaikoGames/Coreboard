@@ -76,6 +76,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
 | Grid arrange | **G** packs the selection (or everything) into rows; **Shift+G** also scales them to one height |
 | Remove | **Delete** / **Backspace** |
+| Help | **H**, or the **?** button in the top-right corner (✕ closes it) |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) |
 | Fit to view | **F** (fits selection, or everything) |
 | Zoom 100% | **1** |
@@ -283,15 +284,20 @@ caption and an *image 3 of 7* counter underneath.
   press again for 3 tones (notan), and again to go back to color. It's a view only: nothing on the
   board changes, and exports stay in color.
 
-## Drawing on images
+## Drawing
 
 Press **D** (or **Done** / **Esc** to stop) and a toolbar appears at the top: **Pen**, **Arrow**,
-**Circle** or **Box**, and six marker colors. Drag on an image to draw on it, e.g. an arrow at the
-rim light or a circle around a detail to copy. Dragging on empty space pans.
+**Circle** or **Box**, and six marker colors. Drag anywhere to draw, e.g. an arrow at the rim light
+or a circle around a detail to copy. Pan with the right or middle button, or Space.
 
-Drawings belong to the picture: they move and resize with it, and turn, flip and crop along with it.
-Each stroke is one undo step (**Ctrl+Z**). **Clear** removes the drawings on the selected images,
-**Hide** / **Shift+D** hides or shows all drawings, and drawings are included in PNG exports.
+- **Start on a picture** and the drawing belongs to it: it moves and resizes with it, and turns,
+  flips and crops along with it.
+- **Start on an empty spot** and the drawing is its own object: click its line to select it, then
+  move, resize or delete it like anything else.
+
+Each stroke is one undo step (**Ctrl+Z**). **Clear** removes the drawings on the selected items (or
+everywhere, with nothing selected), **Hide** / **Shift+D** hides or shows all drawings, and
+drawings are included in PNG exports.
 
 ## Cropping
 
