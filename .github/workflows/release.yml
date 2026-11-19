@@ -179,8 +179,16 @@ jobs:
           # Ad-hoc signature so Apple Silicon will run it (no paid developer certificate).
           codesign --force --deep --sign - "$APP"
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "Core Board" -srcfolder dmg -ov -format UDZO \
-            "dist/CoreBoard-${VERSION}-macos.dmg"
+          # hdiutil now and then fails with "Resource busy" on GitHub's Macs: try a few times.
+          for attempt in 1 2 3 4 5; do
+            if hdiutil create -volname "Core Board" -srcfolder dmg -ov -format UDZO \
+              "dist/CoreBoard-${VERSION}-macos.dmg"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            echo "hdiutil failed (attempt $attempt), retrying"
+            sleep $((attempt * 10))
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: macos
