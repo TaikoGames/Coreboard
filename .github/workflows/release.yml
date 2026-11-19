@@ -2,7 +2,8 @@
 # version as a GitHub Release (tag v<version>, with every platform's files).
 #
 # - Pushing to main publishes automatically when Cargo.toml's version has no release yet, so
-#   bumping the version is all it takes to ship one. Other pushes to main build nothing.
+#   bumping the version is all it takes to ship one. Pushes that don't touch Cargo.toml don't
+#   start it at all.
 # - Run it by hand (Actions tab → "Build installers" → Run workflow) to just build (files under
 #   the run's Artifacts), or with "publish" to release; "commit" builds an older commit, e.g. to
 #   add a past version to the releases.
@@ -24,6 +25,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # A release always changes the version in Cargo.toml, so other pushes don't start the
+    # workflow at all (each run, even one that builds nothing, costs a billed minute).
+    paths: [Cargo.toml]
 
 permissions:
   contents: write
@@ -35,6 +39,7 @@ jobs:
   # Decides what this run does: which commit and version, and whether to build and release.
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       version: ${{ steps.plan.outputs.version }}
@@ -88,6 +93,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +130,7 @@ jobs:
     # Intel Macs: GitHub's Apple Silicon runners were often too busy to pick the job up, and the
     # build makes one universal app for both kinds of Mac either way.
     runs-on: macos-15-intel
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -199,6 +206,7 @@ jobs:
     if: needs.plan.outputs.build == 'true'
     # The oldest supported Ubuntu, so the binary also runs on older distributions.
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -229,6 +237,7 @@ jobs:
     needs: [plan, windows, macos, linux]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/download-artifact@v4
         with:
