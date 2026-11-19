@@ -41,3 +41,9 @@ opt-level = 2
 
 [build-dependencies]
 winresource = "0.1"
+
+# The floating video player (a web view in its own small window) on Windows and macOS, which
+# have a web view built in. On Linux, videos open in the browser instead.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tao = "0.37"
+wry = "0.57"

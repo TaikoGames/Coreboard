@@ -108,8 +108,14 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 let preview = (!item.file.is_empty())
                     .then(|| image::open(images_dir.join(&item.file)).ok())
                     .flatten();
+                let video =
+                    matches!(&item.kind, Kind::Link { url, .. } if crate::web::is_video(url));
                 if let Some(face) = item.kind.card_face() {
-                    draw_card(&mut canvas, &font, (x, y, w, h), &face, preview);
+                    if video && h as f32 >= w as f32 * 0.4 {
+                        draw_video_card(&mut canvas, &font, (x, y, w, h), &face, preview);
+                    } else {
+                        draw_card(&mut canvas, &font, (x, y, w, h), &face, preview);
+                    }
                 }
                 continue;
             }
@@ -298,6 +304,42 @@ fn draw_placeholder(
 }
 
 /// Greedy word wrap into lines no wider than `max_width` (a single long word may overflow).
+/// A video card: its picture filling the card and the title along the bottom, like on the board.
+fn draw_video_card(
+    canvas: &mut RgbaImage,
+    font: &FontRef<'_>,
+    (x, y, w, h): (i64, i64, u32, u32),
+    face: &crate::board::CardFace,
+    preview: Option<DynamicImage>,
+) {
+    fill_rect(canvas, (x, y, w, h), [20, 21, 24]);
+    if let Some(picture) = preview {
+        let picture = picture
+            .resize_to_fill(w.max(1), h.max(1), FilterType::CatmullRom)
+            .to_rgba8();
+        imageops::overlay(canvas, &picture, x, y);
+    }
+    let s = h as f32 / 180.0;
+    let px = crate::board::CARD_TITLE_FONT * s * 0.9;
+    let pad = 8.0 * s;
+    let mut text = face.title.clone();
+    let room = w as f32 - 2.0 * pad;
+    let mut line = Line::layout(font, &text, px);
+    while line.width > room && text.chars().count() > 1 {
+        text.pop();
+        line = Line::layout(font, &format!("{}…", text.trim_end()), px);
+    }
+    let strip_h = (line.height + 2.0 * pad) as u32;
+    blend_rect(
+        canvas,
+        (x, y + h as i64 - strip_h as i64, w, strip_h),
+        [0, 0, 0],
+        170.0 / 255.0,
+    );
+    let ty = (y + h as i64) as f32 - pad - line.height;
+    line.draw(font, canvas, x as f32 + pad, ty, [240, 240, 240], 1.0);
+}
+
 /// A file or link card, laid out like on the board.
 fn draw_card(
     canvas: &mut RgbaImage,

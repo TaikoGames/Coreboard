@@ -76,9 +76,73 @@ pub struct Preview {
 /// The longest side of a link card's stored preview picture.
 const PREVIEW_SIDE: u32 = 480;
 
+/// The video id of a YouTube link (watch, youtu.be, shorts, embed and live links).
+pub fn youtube_id(url: &str) -> Option<String> {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.trim_start_matches("www.").trim_start_matches("m.");
+    let id = match host {
+        "youtu.be" => path.split(['?', '#', '/']).next()?.to_string(),
+        "youtube.com" | "music.youtube.com" | "youtube-nocookie.com" => {
+            if let Some(query) = path.strip_prefix("watch?") {
+                query
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix("v="))?
+                    .split('#')
+                    .next()?
+                    .to_string()
+            } else {
+                let mut parts = path.split('/');
+                match parts.next()? {
+                    "shorts" | "embed" | "live" | "v" => {
+                        parts.next()?.split(['?', '#']).next()?.to_string()
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        _ => return None,
+    };
+    let valid = id.len() == 11
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    valid.then_some(id)
+}
+
+/// Whether `url` is a video Core Board can play in its floating player.
+pub fn is_video(url: &str) -> bool {
+    youtube_id(url).is_some()
+}
+
+/// A YouTube video's title and thumbnail, from YouTube's public video info (which, unlike the
+/// page, never shows a cookie-consent screen first).
+fn youtube_preview(agent: &ureq::Agent, id: &str) -> Preview {
+    let info = format!(
+        "https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v={id}"
+    );
+    let title = get(agent, &info, MAX_PAGE)
+        .ok()
+        .and_then(|(bytes, _)| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|json| json.get("title")?.as_str().map(str::to_string));
+    let image = ["maxresdefault", "hqdefault"].iter().find_map(|name| {
+        let (bytes, _) = get(
+            agent,
+            &format!("https://i.ytimg.com/vi/{id}/{name}.jpg"),
+            MAX_IMAGE,
+        )
+        .ok()?;
+        shrink(&bytes)
+    });
+    Preview { title, image }
+}
+
 /// The title and preview picture (the one chat apps show for links) of the page at `url`.
 pub fn page_preview(url: &str) -> Preview {
     let agent = agent();
+    if let Some(id) = youtube_id(url) {
+        return youtube_preview(&agent, &id);
+    }
     let Ok((bytes, kind)) = get(&agent, url, MAX_IMAGE) else {
         return Preview::default();
     };
@@ -317,6 +381,37 @@ mod tests {
         let html = r#"<meta name=twitter:image content=/pics/a.png>"#;
         assert_eq!(page_image(html).as_deref(), Some("/pics/a.png"));
         assert_eq!(page_image("<p>no pictures</p>"), None);
+    }
+
+    /// Needs the internet: run with `cargo test -- --ignored` (the player workflow does).
+    #[test]
+    #[ignore]
+    fn fetches_a_youtube_title_and_thumbnail() {
+        let preview = page_preview("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+        assert_eq!(preview.title.as_deref(), Some("Me at the zoo"));
+        let image = image::load_from_memory(&preview.image.expect("a thumbnail")).unwrap();
+        assert!(image.width() >= 300);
+    }
+
+    #[test]
+    fn recognizes_youtube_links() {
+        for url in [
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://youtube.com/watch?feature=share&v=dQw4w9WgXcQ&t=42",
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ?si=abc",
+            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ",
+        ] {
+            assert_eq!(youtube_id(url).as_deref(), Some("dQw4w9WgXcQ"), "{url}");
+        }
+        for url in [
+            "https://www.youtube.com/@someone",
+            "https://www.youtube.com/watch?v=short",
+            "https://example.com/watch?v=dQw4w9WgXcQ",
+        ] {
+            assert_eq!(youtube_id(url), None, "{url}");
+        }
     }
 
     #[test]

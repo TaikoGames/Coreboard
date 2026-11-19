@@ -63,9 +63,10 @@ type Exported = Result<std::path::PathBuf, String>;
 const RADIAL_INNER: f32 = 34.0;
 const RADIAL_OUTER: f32 = 118.0;
 
-/// The radial menu's slices, clockwise from the top.
+/// The radial menu's slices.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RadialAction {
+    // For an image.
     SimilarValues,
     SimilarPalette,
     SearchWeb,
@@ -73,11 +74,21 @@ enum RadialAction {
     StudyView,
     Guide,
     Crop,
+    Focus,
+    // For the board.
     Note,
+    Link,
+    Slot,
+    Paste,
+    Fit,
+    Surprise,
+    Boards,
+    Help,
 }
 
 impl RadialAction {
-    const ALL: [Self; 8] = [
+    /// Slices over an image (or with one selected), clockwise from the top.
+    const IMAGE: [Self; 8] = [
         Self::SimilarValues,
         Self::SimilarPalette,
         Self::SearchWeb,
@@ -85,7 +96,18 @@ impl RadialAction {
         Self::StudyView,
         Self::Guide,
         Self::Crop,
+        Self::Focus,
+    ];
+    /// Slices over the empty board.
+    const BOARD: [Self; 8] = [
         Self::Note,
+        Self::Link,
+        Self::Slot,
+        Self::Paste,
+        Self::Fit,
+        Self::Surprise,
+        Self::Boards,
+        Self::Help,
     ];
 
     fn label(self) -> &'static str {
@@ -97,7 +119,15 @@ impl RadialAction {
             Self::StudyView => tr("Study\nview"),
             Self::Guide => tr("Guide"),
             Self::Crop => tr("Crop"),
+            Self::Focus => tr("Focus\nview"),
             Self::Note => tr("Note"),
+            Self::Link => tr("Link"),
+            Self::Slot => tr("Image\nslot"),
+            Self::Paste => tr("Paste"),
+            Self::Fit => tr("Fit\nview"),
+            Self::Surprise => tr("Surprise\nme"),
+            Self::Boards => tr("Boards"),
+            Self::Help => tr("Help"),
         }
     }
 }
@@ -219,6 +249,8 @@ pub struct CoreBoardApp {
     window_level_sent: bool,
     show_export: bool,
     exporting: bool,
+    /// The last exported file, shown until its message is closed.
+    export_notice: Option<std::path::PathBuf>,
     exported_tx: Sender<Exported>,
     exported_rx: Receiver<Exported>,
     palette_tx: Sender<Extracted>,
@@ -229,6 +261,8 @@ pub struct CoreBoardApp {
     new_board_name: String,
     /// Center of the open radial menu.
     radial: Option<Pos2>,
+    /// The slices of the open radial menu: for an image, or for the board.
+    radial_actions: [RadialAction; 8],
     finder: Option<Finder>,
     find_tx: Sender<Found>,
     find_rx: Receiver<Found>,
@@ -311,6 +345,7 @@ impl CoreBoardApp {
             window_level_sent: false,
             show_export: false,
             exporting: false,
+            export_notice: None,
             exported_tx,
             exported_rx,
             palette_tx,
@@ -319,6 +354,7 @@ impl CoreBoardApp {
             show_boards: false,
             new_board_name: String::new(),
             radial: None,
+            radial_actions: RadialAction::BOARD,
             finder: None,
             find_tx,
             find_rx,
@@ -1367,7 +1403,13 @@ impl CoreBoardApp {
         let text = pasted_text.or_else(|| self.clipboard.as_mut()?.get_text().ok());
         // A web link (copied image address or page): download it in the background.
         if let Some(url) = text.as_deref().and_then(crate::web::link) {
-            self.fetch_link(canvas, at, url);
+            // A video becomes a video card that plays in the floating player; anything else
+            // is downloaded as a picture.
+            if crate::web::is_video(&url) {
+                self.add_link_card(canvas, at, url, None);
+            } else {
+                self.fetch_link(canvas, at, url);
+            }
             return;
         }
         let paths: Vec<_> = text
@@ -1598,7 +1640,8 @@ impl CoreBoardApp {
         if let Ok(result) = self.exported_rx.try_recv() {
             self.exporting = false;
             match result {
-                Ok(path) => self.toast(trf("Exported {}", &[&path.display()])),
+                // Stays on screen until closed, with a way to the file.
+                Ok(path) => self.export_notice = Some(path),
                 Err(err) => self.toast(trf("Export failed: {}", &[&err])),
             }
         }
@@ -1607,12 +1650,28 @@ impl CoreBoardApp {
     // ---------------------------------------------------------------- radial menu
 
     /// Opens the radial menu at `center`, selecting the image under it if it isn't already.
+    /// Image actions over an image (or with one selected and the pointer on empty board);
+    /// board actions otherwise.
     fn open_radial(&mut self, canvas: Rect, center: Pos2) {
-        if let Some(id) = self.hit(canvas, center)
-            && !self.selection.contains(&id)
-        {
-            self.selection = HashSet::from([id]);
-        }
+        let under = self
+            .hit(canvas, center)
+            .and_then(|id| self.board.items.iter().find(|i| i.id == id));
+        let image = match under {
+            Some(item) if item.is_image() => {
+                let id = item.id;
+                if !self.selection.contains(&id) {
+                    self.selection = HashSet::from([id]);
+                }
+                true
+            }
+            Some(_) => false,
+            None => self.first_selected().is_some(),
+        };
+        self.radial_actions = if image {
+            RadialAction::IMAGE
+        } else {
+            RadialAction::BOARD
+        };
         self.radial = Some(center);
     }
 
@@ -1624,13 +1683,14 @@ impl CoreBoardApp {
             return None;
         }
         // Slice 0 points straight up; slices go clockwise.
-        let n = RadialAction::ALL.len() as f32;
+        let actions = &self.radial_actions;
+        let n = actions.len() as f32;
         let angle = d.x.atan2(-d.y).rem_euclid(std::f32::consts::TAU);
-        let slice = ((angle / std::f32::consts::TAU * n + 0.5) as usize) % RadialAction::ALL.len();
-        Some(RadialAction::ALL[slice])
+        let slice = ((angle / std::f32::consts::TAU * n + 0.5) as usize) % actions.len();
+        Some(actions[slice])
     }
 
-    fn run_radial(&mut self, canvas: Rect, action: RadialAction) {
+    fn run_radial(&mut self, ctx: &egui::Context, canvas: Rect, action: RadialAction) {
         let center = self.radial.unwrap_or(canvas.center());
         match action {
             RadialAction::SimilarValues => self.open_finder(FindMode::Values),
@@ -1640,7 +1700,15 @@ impl CoreBoardApp {
             RadialAction::StudyView => self.cycle_analysis(true),
             RadialAction::Guide => self.cycle_guide(),
             RadialAction::Crop => self.toggle_crop_mode(),
+            RadialAction::Focus => self.open_focus(canvas, Some(center)),
             RadialAction::Note => self.add_note(canvas, center),
+            RadialAction::Link => self.open_link_prompt(canvas, center),
+            RadialAction::Slot => self.add_placeholder(canvas, center),
+            RadialAction::Paste => self.paste(canvas, center, None),
+            RadialAction::Fit => self.fit(canvas),
+            RadialAction::Surprise => self.surprise(ctx),
+            RadialAction::Boards => self.open_boards_window(),
+            RadialAction::Help => self.show_help = true,
         }
     }
 
@@ -1651,10 +1719,10 @@ impl CoreBoardApp {
             egui::Id::unique("coreboard-radial"),
         ));
         let chosen = self.radial_choice(ctx.input(|i| i.pointer.hover_pos()));
-        let n = RadialAction::ALL.len();
+        let n = self.radial_actions.len();
         let step = std::f32::consts::TAU / n as f32;
         painter.circle_filled(center, RADIAL_OUTER + 6.0, Color32::from_black_alpha(150));
-        for (i, action) in RadialAction::ALL.iter().enumerate() {
+        for (i, action) in self.radial_actions.iter().enumerate() {
             // A wedge from the inner to the outer ring, centered on its direction.
             let mid = i as f32 * step;
             let dir = |a: f32| vec2(a.sin(), -a.cos());
@@ -2223,7 +2291,7 @@ impl CoreBoardApp {
                         self.open_radial(canvas, anchor);
                     } else if !*pressed && self.radial.is_some() {
                         if let Some(action) = self.radial_choice(pointer.hover_pos()) {
-                            self.run_radial(canvas, action);
+                            self.run_radial(&ctx, canvas, action);
                         }
                         self.radial = None;
                     }
@@ -2393,7 +2461,7 @@ impl CoreBoardApp {
         let press = match (self.radial.is_some(), press) {
             (true, Some((pos, _))) => {
                 if let Some(action) = self.radial_choice(Some(pos)) {
-                    self.run_radial(canvas, action);
+                    self.run_radial(&ctx, canvas, action);
                 }
                 self.radial = None;
                 None
@@ -2779,7 +2847,8 @@ impl CoreBoardApp {
                         }
                     };
                     if let Some(face) = item.kind.card_face() {
-                        draw_card(&painter, rect, &face, opacity, preview);
+                        let video = matches!(&item.kind, Kind::Link { url, .. } if crate::web::is_video(url));
+                        draw_card(&painter, rect, &face, opacity, preview, video);
                     }
                     if selected {
                         draw_selection(&painter, rect, handle);
@@ -3028,6 +3097,53 @@ impl CoreBoardApp {
 }
 
 impl CoreBoardApp {
+    /// "Exported …" with Open folder and ✕, until it's closed (clicking it opens the folder).
+    fn export_notice_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.export_notice.clone() else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut open = false;
+        let mut close = false;
+        egui::Area::new(egui::Id::unique("coreboard-export-notice"))
+            .order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_BOTTOM, vec2(0.0, -44.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let text = ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(trf("✓ Exported {}", &[&name]))
+                                            .color(Color32::WHITE),
+                                    )
+                                    .sense(Sense::click()),
+                                )
+                                .on_hover_text(path.display().to_string());
+                            open |= text.clicked();
+                            open |= ui
+                                .button(egui::RichText::new(tr("Open folder")).strong())
+                                .clicked();
+                            close = ui.button("✕").on_hover_text(tr("Close")).clicked();
+                        });
+                    });
+            });
+        if open {
+            let folder = path.parent().map(|p| p.to_path_buf()).unwrap_or(path);
+            if let Err(err) = opener::open(&folder) {
+                self.toast(trf("Couldn't open it: {}", &[&err]));
+            }
+        }
+        if close {
+            self.export_notice = None;
+        }
+    }
+
     /// A close button on the help panel, and a "?" button to open it when it's closed.
     fn help_buttons(&mut self, ctx: &egui::Context, canvas: Rect) {
         let (at, label, tip) = match self.help_rect.filter(|_| self.show_help) {
@@ -3074,6 +3190,7 @@ impl CoreBoardApp {
         self.link_prompt_window(ctx, canvas);
         self.minimap(ctx, canvas);
         self.help_buttons(ctx, canvas);
+        self.export_notice_window(ctx);
         self.paint_loupe(ctx, canvas);
         self.update_banner(ctx, canvas);
         self.unreadable_banner(ctx, canvas);

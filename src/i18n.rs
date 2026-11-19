@@ -87,6 +87,13 @@ const SPANISH: &[(&str, &str)] = &[
     ("Guide", "Guía"),
     ("Crop", "Recortar"),
     ("Note", "Nota"),
+    ("Focus\nview", "Vista de\nenfoque"),
+    ("Link", "Enlace"),
+    ("Image\nslot", "Hueco de\nimagen"),
+    ("Paste", "Pegar"),
+    ("Fit\nview", "Ver\ntodo"),
+    ("Surprise\nme", "Sorpréndeme"),
+    ("Help", "Ayuda"),
     // Messages on the board
     (
         "{} locked item(s) kept · unlock with L",
@@ -171,6 +178,8 @@ const SPANISH: &[(&str, &str)] = &[
     ("Folder for exports", "Carpeta para exportar"),
     ("Reset", "Restablecer"),
     ("Exported {}", "Exportado: {}"),
+    ("✓ Exported {}", "✓ Exportado: {}"),
+    ("Open folder", "Abrir carpeta"),
     ("Export failed: {}", "No se pudo exportar: {}"),
     ("Image to find", "Imagen por encontrar"),
     // Find more
@@ -296,6 +305,7 @@ const SPANISH: &[(&str, &str)] = &[
     ),
     ("Couldn't open it: {}", "No se pudo abrir: {}"),
     ("Opening…", "Abriendo…"),
+    ("Opening the video…", "Abriendo el vídeo…"),
     ("Add a link", "Añadir un enlace"),
     (
         "Paste or type a web address",

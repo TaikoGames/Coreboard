@@ -8,12 +8,20 @@ mod export;
 mod filters;
 mod i18n;
 mod library;
+mod player;
 mod update;
 mod web;
 
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
+    // `coreboard --play-video <url> <title>` is the floating video player, not the board.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(player::FLAG) {
+        let url = args.get(2).map(String::as_str).unwrap_or_default();
+        player::run(url, args.get(3).map(String::as_str).unwrap_or_default());
+        return Ok(());
+    }
     update::remove_old_copies();
     i18n::apply(&boards::settings().language);
     // A folder given on the command line, else the board used last, else the default one.

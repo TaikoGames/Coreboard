@@ -30,10 +30,15 @@ impl CoreBoardApp {
         let zoom = self.board.view.zoom;
         // Readable at any zoom: never smaller than its normal size on screen.
         let scale = (1.0 / zoom).max(1.0);
-        let size = vec2(CARD_SIZE[0], CARD_SIZE[1]) * scale;
         let mut cursor = self.to_world(canvas, at);
         let mut ids = Vec::new();
         for kind in kinds {
+            // Videos get a 16:9 card, with room for their picture.
+            let size = if matches!(&kind, Kind::Link { url, .. } if crate::web::is_video(url)) {
+                vec2(VIDEO_SIZE[0], VIDEO_SIZE[1]) * scale
+            } else {
+                vec2(CARD_SIZE[0], CARD_SIZE[1]) * scale
+            };
             let id = self.board.next_id;
             self.board.next_id += 1;
             self.board.items.push(Item {
@@ -148,6 +153,13 @@ impl CoreBoardApp {
             return;
         };
         match &item.kind {
+            Kind::Link { url, title } if crate::web::is_video(url) => {
+                let (url, title) = (url.clone(), title.clone());
+                match crate::player::open(&url, &title) {
+                    Ok(()) => self.toast(tr("Opening the video…").into()),
+                    Err(_) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                }
+            }
             Kind::Link { url, .. } => {
                 ctx.open_url(egui::OpenUrl::new_tab(url.clone()));
             }
@@ -235,14 +247,99 @@ impl CoreBoardApp {
 }
 
 /// Draws a file or link card into `rect`.
-/// `preview` is the link's picture (texture and its size in pixels), shown in place of the badge.
-pub(super) fn draw_card(
+/// A video card's size in world units (16:9).
+const VIDEO_SIZE: [f32; 2] = [320.0, 180.0];
+
+/// A video card: its picture filling the card, a play button, and the title along the bottom.
+fn draw_video_card(
     painter: &egui::Painter,
     rect: Rect,
     face: &CardFace,
     opacity: f32,
     preview: Option<(egui::TextureId, Vec2)>,
 ) {
+    let s = rect.height() / VIDEO_SIZE[1];
+    let radius = CornerRadius::same((8.0 * s).clamp(1.0, 14.0) as u8);
+    painter.rect_filled(
+        rect,
+        radius,
+        Color32::from_rgb(20, 21, 24).gamma_multiply(opacity),
+    );
+    if let Some((texture, size)) = preview {
+        let [u0, v0, u1, v1] = cover_uv(size, rect.size());
+        let mut mesh = egui::Mesh::with_texture(texture);
+        mesh.add_rect_with_uv(
+            rect,
+            Rect::from_min_max(pos2(u0, v0), pos2(u1, v1)),
+            Color32::WHITE.gamma_multiply(opacity),
+        );
+        painter.add(egui::Shape::mesh(mesh));
+    }
+    // The play button.
+    let r = (rect.height() * 0.16).max(3.0);
+    painter.circle_filled(
+        rect.center(),
+        r * 1.25,
+        Color32::from_black_alpha((160.0 * opacity) as u8),
+    );
+    let c = rect.center() + vec2(r * 0.12, 0.0);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + vec2(-r * 0.45, -r * 0.6),
+            c + vec2(r * 0.6, 0.0),
+            c + vec2(-r * 0.45, r * 0.6),
+        ],
+        Color32::WHITE.gamma_multiply(opacity),
+        Stroke::NONE,
+    ));
+    // The title on a dark strip along the bottom.
+    let font = CARD_TITLE_FONT * s * 0.9;
+    if font >= 4.0 {
+        let pad = 8.0 * s;
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            face.title.clone(),
+            FontId::proportional(font),
+            Color32::from_gray(240).gamma_multiply(opacity),
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 2.0 * pad).max(1.0));
+        let galley = painter.layout_job(job);
+        let strip = Rect::from_min_max(
+            pos2(rect.min.x, rect.max.y - galley.size().y - 2.0 * pad),
+            rect.max,
+        );
+        painter.rect_filled(
+            strip,
+            CornerRadius {
+                sw: radius.sw,
+                se: radius.se,
+                ..Default::default()
+            },
+            Color32::from_black_alpha((170.0 * opacity) as u8),
+        );
+        painter.galley(strip.min + vec2(pad, pad), galley, Color32::WHITE);
+    }
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, Color32::from_gray(66).gamma_multiply(opacity)),
+        StrokeKind::Inside,
+    );
+}
+
+/// `preview` is the link's picture (texture and its size in pixels), shown in place of the badge.
+/// A video link in a card at least half as tall as it's wide is drawn as a video card.
+pub(super) fn draw_card(
+    painter: &egui::Painter,
+    rect: Rect,
+    face: &CardFace,
+    opacity: f32,
+    preview: Option<(egui::TextureId, Vec2)>,
+    video: bool,
+) {
+    if video && rect.height() >= rect.width() * 0.4 {
+        draw_video_card(painter, rect, face, opacity, preview);
+        return;
+    }
     // Everything scales with the card, so it looks the same at any zoom or size.
     let s = rect.height() / CARD_SIZE[1];
     let radius = CornerRadius::same((8.0 * s).clamp(1.0, 14.0) as u8);
