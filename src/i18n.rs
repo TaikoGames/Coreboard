@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub enum Lang {
     English,
     Spanish,
+    Catalan,
 }
 
 static CURRENT: AtomicU8 = AtomicU8::new(0);
@@ -21,6 +22,7 @@ pub fn apply(setting: &str) {
     let lang = match setting {
         "en" => Lang::English,
         "es" => Lang::Spanish,
+        "ca" => Lang::Catalan,
         _ => system(),
     };
     CURRENT.store(lang as u8, Ordering::Relaxed);
@@ -29,7 +31,9 @@ pub fn apply(setting: &str) {
 /// The computer's language, if it's one Core Board speaks.
 pub fn system() -> Lang {
     let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
-    if locale.starts_with("es") {
+    if locale.starts_with("ca") {
+        Lang::Catalan
+    } else if locale.starts_with("es") {
         Lang::Spanish
     } else {
         Lang::English
@@ -39,6 +43,7 @@ pub fn system() -> Lang {
 pub fn current() -> Lang {
     match CURRENT.load(Ordering::Relaxed) {
         1 => Lang::Spanish,
+        2 => Lang::Catalan,
         _ => Lang::English,
     }
 }
@@ -48,6 +53,7 @@ pub fn tr(english: &'static str) -> &'static str {
     match current() {
         Lang::English => english,
         Lang::Spanish => spanish().get(english).copied().unwrap_or(english),
+        Lang::Catalan => catalan().get(english).copied().unwrap_or(english),
     }
 }
 
@@ -74,6 +80,11 @@ fn fill(template: &str, values: &[&dyn Display]) -> String {
 fn spanish() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| SPANISH.iter().copied().collect())
+}
+
+fn catalan() -> &'static HashMap<&'static str, &'static str> {
+    static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    TABLE.get_or_init(|| CATALAN.iter().copied().collect())
 }
 
 /// English -> Spanish. Keep `{}` placeholders in the same order.
@@ -652,6 +663,574 @@ const SPANISH: &[(&str, &str)] = &[
     ("show / hide this help", "mostrar / ocultar esta ayuda"),
 ];
 
+/// English -> Catalan, the same texts as [`SPANISH`].
+const CATALAN: &[(&str, &str)] = &[
+    ("Similar\nvalues", "Valors\nsimilars"),
+    ("Similar\npalette", "Paleta\nsimilar"),
+    ("Search\nweb", "Cercar\na la web"),
+    ("Extract\npalette", "Treure\npaleta"),
+    ("Study\nview", "Vista\nd'estudi"),
+    ("Guide", "Guia"),
+    ("Crop", "Retallar"),
+    ("Note", "Nota"),
+    ("Focus\nview", "Vista\nd'enfocament"),
+    ("Link", "Enllaç"),
+    ("Image\nslot", "Espai\nd'imatge"),
+    ("Paste", "Enganxar"),
+    ("Fit\nview", "Veure-ho\ntot"),
+    ("Surprise\nme", "Sorprèn-me"),
+    ("Help", "Ajuda"),
+    (
+        "{} locked item(s) kept · unlock with L",
+        "{} element(s) bloquejat(s) es queden · desbloqueja amb L",
+    ),
+    ("Select images first", "Selecciona imatges primer"),
+    ("Golden spiral turned", "Espiral àuria girada"),
+    ("Value", "Valor"),
+    ("Duplicated", "Duplicat"),
+    ("Duplicated {} items", "{} elements duplicats"),
+    (
+        "Values: whole board in grayscale",
+        "Valors: tot el tauler en grisos",
+    ),
+    (
+        "Values: whole board in 3 tones",
+        "Valors: tot el tauler en 3 tons",
+    ),
+    ("Back to color", "Tornem al color"),
+    (
+        "Select images to extract colors from",
+        "Selecciona imatges per treure'n els colors",
+    ),
+    ("Extracting colors…", "Traient colors…"),
+    (
+        "Color extraction failed: {}",
+        "No s'han pogut treure els colors: {}",
+    ),
+    ("Crop done", "Retall fet"),
+    (
+        "Select one image to crop",
+        "Selecciona una imatge per retallar",
+    ),
+    (
+        "Drag over the image to crop · Enter/Esc when done · Shift+X resets",
+        "Arrossega sobre la imatge per retallar · Enter/Esc en acabar · Shift+X ho desfà",
+    ),
+    ("Crop reset", "Retall desfet"),
+    ("Untitled", "Sense títol"),
+    (
+        "Name this slot, e.g. Front view",
+        "Posa nom a aquest espai, p. ex. Vista frontal",
+    ),
+    (
+        "Add a caption, e.g. Sargent, 1885, rim light",
+        "Afegeix un peu de foto, p. ex. Sargent, 1885, llum de contorn",
+    ),
+    (
+        "That file isn't an image I can read",
+        "Aquest fitxer no és una imatge que pugui llegir",
+    ),
+    (
+        "That isn't a picture I can read",
+        "Això no és una imatge que pugui llegir",
+    ),
+    (
+        "Clipboard has no image",
+        "No hi ha cap imatge al porta-retalls",
+    ),
+    ("Downloading picture…", "Baixant la imatge…"),
+    (
+        "Couldn't get that picture: {}",
+        "No s'ha pogut aconseguir la imatge: {}",
+    ),
+    ("all {} images", "les {} imatges"),
+    ("{} selected image(s)", "{} imatge(s) seleccionada(es)"),
+    ("Export PNG", "Exportar PNG"),
+    ("Exports {} as one PNG.", "Exporta {} en un sol PNG."),
+    (
+        "Watermark text (leave empty for none):",
+        "Text de la marca d'aigua (buit per a cap):",
+    ),
+    ("e.g. © Your Name", "p. ex. © El teu nom"),
+    ("Position", "Posició"),
+    ("Opacity", "Opacitat"),
+    ("Exporting…", "Exportant…"),
+    ("Export", "Exportar"),
+    ("Cancel", "Cancel·lar"),
+    ("Saved to {}", "Es desa a {}"),
+    ("Change…", "Canviar…"),
+    ("Folder for exports", "Carpeta per exportar"),
+    ("Reset", "Restablir"),
+    ("Exported {}", "Exportat: {}"),
+    ("✓ Exported {}", "✓ Exportat: {}"),
+    ("Open folder", "Obrir la carpeta"),
+    ("Export failed: {}", "No s'ha pogut exportar: {}"),
+    ("Image to find", "Imatge per trobar"),
+    (
+        "Select an image to find more like it",
+        "Selecciona una imatge per trobar-ne d'altres de semblants",
+    ),
+    ("Find more", "Trobar-ne més"),
+    ("Similar values", "Valors similars"),
+    ("Similar palette", "Paleta similar"),
+    ("Search the web", "Cercar a la web"),
+    ("value structure", "estructura de valors"),
+    ("colors", "colors"),
+    (
+        "Images on your other boards ranked by {}. Click one to copy it here.",
+        "Imatges dels teus altres taulers ordenades per {}. Fes clic en una per copiar-la aquí.",
+    ),
+    ("Scanning your boards…", "Revisant els teus taulers…"),
+    (
+        "No images on your other boards yet. Make more boards with Ctrl+O and drop references in; they'll show up here.",
+        "Encara no hi ha imatges als teus altres taulers. Crea'n més amb Ctrl+O i deixa-hi anar referències; apareixeran aquí.",
+    ),
+    (
+        "Couldn't read this image: {}",
+        "No s'ha pogut llegir aquesta imatge: {}",
+    ),
+    (
+        "From {}\nClick to copy onto this board",
+        "De {}\nFes clic per copiar-la en aquest tauler",
+    ),
+    (
+        "Opens an image search in your browser.",
+        "Obre una cerca d'imatges al navegador.",
+    ),
+    (
+        "Subject, e.g. oak tree at dusk",
+        "Tema, p. ex. roure al capvespre",
+    ),
+    ("Any color", "Qualsevol color"),
+    ("Black & white", "Blanc i negre"),
+    ("{} (from this image)", "{} (d'aquesta imatge)"),
+    ("Color", "Color"),
+    ("Type a subject to search.", "Escriu un tema per cercar."),
+    ("Can't read {}", "No es pot llegir {}"),
+    ("Boards", "Taulers"),
+    ("New board", "Tauler nou"),
+    (
+        "Name, e.g. Character refs",
+        "Nom, p. ex. Refs de personatge",
+    ),
+    ("Create", "Crear"),
+    (
+        "Open or create in a folder…",
+        "Obrir o crear en una carpeta…",
+    ),
+    ("Board folder", "Carpeta del tauler"),
+    ("Recent", "Recents"),
+    ("No other boards yet", "Encara no hi ha altres taulers"),
+    ("Animations", "Animacions"),
+    (
+        "Glides, pops, swing and flicks. Turn off for a still board.",
+        "Lliscaments, rebots, balancejos i llançaments. Desactiva-les per tenir un tauler quiet.",
+    ),
+    ("Mini-map", "Minimapa"),
+    (
+        "An overview of the whole board in the corner, while part of it is off screen. Click or drag in it to go there.",
+        "Una vista de tot el tauler a la cantonada quan una part queda fora de la pantalla. Fes clic o arrossega-hi per anar-hi.",
+    ),
+    ("Close", "Tancar"),
+    ("Zoom out", "Allunyar"),
+    ("Zoom in", "Apropar"),
+    ("Back to 100%", "Tornar al 100%"),
+    ("Fit everything (F)", "Veure-ho tot (F)"),
+    ("Close the help (H)", "Tancar l'ajuda (H)"),
+    ("Shortcuts and help (H)", "Dreceres i ajuda (H)"),
+    ("Language", "Idioma"),
+    ("Automatic ({})", "Automàtic ({})"),
+    ("Can't open {}: {}", "No es pot obrir {}: {}"),
+    ("Opened {}", "Obert: {}"),
+    ("Save failed: {}", "No s'ha pogut desar: {}"),
+    ("Saved", "Desat"),
+    ("Drawings shown", "Dibuixos visibles"),
+    ("Drawings hidden", "Dibuixos amagats"),
+    (
+        "Color picker on: hover an image",
+        "Comptagotes activat: passa per sobre d'una imatge",
+    ),
+    ("Color picker off", "Comptagotes desactivat"),
+    ("Always on top: on", "Sempre a sobre: activat"),
+    ("Always on top: off", "Sempre a sobre: desactivat"),
+    ("Opacity {}%", "Opacitat {}%"),
+    ("Drop to fill “{}”", "Deixa anar per omplir «{}»"),
+    (
+        "Drop to fill this slot",
+        "Deixa anar per omplir aquest espai",
+    ),
+    (
+        "Drop images or files here, paste with Ctrl+V, or press N for a note",
+        "Deixa anar imatges o fitxers aquí, enganxa amb Ctrl+V o prem N per a una nota",
+    ),
+    ("{} items", "{} elements"),
+    ("opacity {}%", "opacitat {}%"),
+    ("on top", "sempre a sobre"),
+    (
+        "DRAW: drag anywhere, Esc when done",
+        "DIBUIX: arrossega on vulguis, Esc en acabar",
+    ),
+    (
+        "VALUES: whole board in grayscale (Shift+B)",
+        "VALORS: tot el tauler en grisos (Shift+B)",
+    ),
+    (
+        "VALUES: whole board in 3 tones (Shift+B)",
+        "VALORS: tot el tauler en 3 tons (Shift+B)",
+    ),
+    (
+        "CROP: drag over the image, Enter when done",
+        "RETALL: arrossega sobre la imatge, Enter en acabar",
+    ),
+    ("{} selected", "{} seleccionat(s)"),
+    ("Empty note", "Nota buida"),
+    ("shortcuts", "dreceres"),
+    (
+        "Can't find {}: it was moved or deleted",
+        "No es troba {}: s'ha mogut o esborrat",
+    ),
+    ("Couldn't open it: {}", "No s'ha pogut obrir: {}"),
+    ("Opening…", "Obrint…"),
+    ("Opening the PDF…", "Obrint el PDF…"),
+    ("it's password-protected", "té contrasenya"),
+    ("it couldn't be read", "no s'ha pogut llegir"),
+    ("it has no pages", "no té pàgines"),
+    (
+        "Couldn't show the PDF's pages: {}",
+        "No s'han pogut mostrar les pàgines del PDF: {}",
+    ),
+    (
+        "Added the first {} of {} pages from {}",
+        "Afegides les primeres {} de {} pàgines de {}",
+    ),
+    ("Added {} pages from {}", "Afegides {} pàgines de {}"),
+    ("Opening the video…", "Obrint el vídeo…"),
+    ("Add a link", "Afegir un enllaç"),
+    (
+        "Paste or type a web address",
+        "Enganxa o escriu una adreça web",
+    ),
+    ("Add", "Afegir"),
+    (
+        "Double-click the card to open the page.",
+        "Fes doble clic a la targeta per obrir la pàgina.",
+    ),
+    (
+        "That doesn't look like a web address",
+        "Això no sembla una adreça web",
+    ),
+    ("Folder", "Carpeta"),
+    ("Shortcut", "Drecera"),
+    ("App", "Aplicació"),
+    (
+        "Draw: drag anywhere · Esc or D when done",
+        "Dibuixar: arrossega on vulguis · Esc o D en acabar",
+    ),
+    ("Drawing done", "Dibuix acabat"),
+    ("Drawings cleared", "Dibuixos esborrats"),
+    ("Clear", "Esborrar"),
+    (
+        "Remove the drawings on the selected images",
+        "Treu els dibuixos de les imatges seleccionades",
+    ),
+    ("Hide", "Amagar"),
+    ("Show", "Mostrar"),
+    (
+        "Show or hide all drawings (Shift+D)",
+        "Mostra o amaga tots els dibuixos (Shift+D)",
+    ),
+    ("Done", "Fet"),
+    ("Esc or D", "Esc o D"),
+    ("Pen", "Llapis"),
+    ("Arrow", "Fletxa"),
+    ("Circle", "Cercle"),
+    ("Box", "Caixa"),
+    ("No images to focus on", "No hi ha imatges per veure"),
+    (
+        "Add some images first, then press S for a surprise",
+        "Afegeix algunes imatges primer i després prem S per a una sorpresa",
+    ),
+    ("Surprise! From \u{201c}{}\u{201d}", "Sorpresa! De «{}»"),
+    ("image {} of {}", "imatge {} de {}"),
+    (
+        "← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back",
+        "← → passar   S sorpresa   roda zoom   arrossegar moure   V C B M R estudi   Esc tornar",
+    ),
+    ("Unlocked", "Desbloquejat"),
+    ("Locked", "Bloquejat"),
+    ("Unpinned", "Desfixat"),
+    ("Pinned to the screen", "Fixat a la pantalla"),
+    (
+        "Select something to tag",
+        "Selecciona alguna cosa per etiquetar",
+    ),
+    ("Tags · {} selected", "Etiquetes · {} seleccionat(s)"),
+    ("No tags yet", "Encara no hi ha etiquetes"),
+    ("Remove from the selection", "Treure de la selecció"),
+    (
+        "Add a tag and press Enter",
+        "Afegeix una etiqueta i prem Enter",
+    ),
+    ("On this board", "En aquest tauler"),
+    (
+        "Search tags, notes and frame titles",
+        "Cerca etiquetes, notes i títols de marcs",
+    ),
+    ("{} found", "{} trobat(s)"),
+    ("Select", "Seleccionar"),
+    (
+        "Select the matches and zoom to them (Enter)",
+        "Selecciona els resultats i apropa-t'hi (Enter)",
+    ),
+    ("Close search (Esc)", "Tancar la cerca (Esc)"),
+    (
+        "Select 3 or more items to space evenly",
+        "Selecciona 3 o més elements per espaiar-los igual",
+    ),
+    ("Align", "Alinear"),
+    ("Space", "Espaiar"),
+    ("Across", "En amplada"),
+    ("Down", "En alçada"),
+    ("Left", "Esquerra"),
+    ("Center", "Centre"),
+    ("Right", "Dreta"),
+    ("Top", "Dalt"),
+    ("Middle", "Mig"),
+    ("Bottom", "Baix"),
+    ("Filled “{}”", "Omplert «{}»"),
+    ("Slot filled", "Espai omplert"),
+    ("Drop an image here", "Deixa anar una imatge aquí"),
+    ("Checking…", "Comprovant…"),
+    ("Version {} is available", "La versió {} està disponible"),
+    ("You're up to date ({})", "Tens l'última versió ({})"),
+    (
+        "Core Board {} is the latest version",
+        "Core Board {} és l'última versió",
+    ),
+    ("Couldn't check: {}", "No s'ha pogut comprovar: {}"),
+    (
+        "Couldn't check for updates: {}",
+        "No s'han pogut buscar actualitzacions: {}",
+    ),
+    (
+        "Update failed: {}. Opening the download page instead.",
+        "L'actualització ha fallat: {}. S'obre la pàgina de baixada.",
+    ),
+    (
+        "Core Board {} is available",
+        "Core Board {} està disponible",
+    ),
+    ("(you have {})", "(tens la {})"),
+    ("Downloading the update…", "Baixant l'actualització…"),
+    ("Update now", "Actualitzar ara"),
+    ("Download", "Baixar"),
+    (
+        "Downloads and installs it, then reopens Core Board. Your boards are saved first.",
+        "La baixa i la instal·la, i torna a obrir Core Board. Els teus taulers es desen abans.",
+    ),
+    ("Opens the download page", "Obre la pàgina de baixada"),
+    ("What's new", "Novetats"),
+    ("Later", "Més tard"),
+    ("Check for updates", "Buscar actualitzacions"),
+    ("Download page", "Pàgina de baixada"),
+    (
+        "mikibutler.ca/coreboard: every version, for Windows, macOS and Linux",
+        "mikibutler.ca/coreboard: totes les versions, per a Windows, macOS i Linux",
+    ),
+    ("Show the update", "Veure l'actualització"),
+    (
+        "Check for updates when Core Board starts",
+        "Buscar actualitzacions en obrir Core Board",
+    ),
+    (
+        "One small request to mikibutler.ca. Nothing about you or your boards is sent.",
+        "Una petita consulta a mikibutler.ca. No s'envia res sobre tu ni els teus taulers.",
+    ),
+    (
+        "This board can't be opened in this version",
+        "Aquest tauler no es pot obrir en aquesta versió",
+    ),
+    (
+        "It was probably saved by a newer Core Board. Your board is safe: this version won't change or save over it. Update Core Board to open it.",
+        "Segurament es va desar amb un Core Board més nou. El teu tauler està segur: aquesta versió no el canviarà ni el sobreescriurà. Actualitza Core Board per obrir-lo.",
+    ),
+    ("Details: {}", "Detalls: {}"),
+    ("Other boards…", "Altres taulers…"),
+    ("Can't watch {}: {}", "No es pot vigilar {}: {}"),
+    (
+        "Watching {} · new images will appear here",
+        "Vigilant {} · les imatges noves apareixeran aquí",
+    ),
+    ("{} images", "{} imatges"),
+    ("Added {} from {}", "Afegit {} de {}"),
+    ("Watching: {}", "Vigilant: {}"),
+    ("Watch a folder", "Vigilar una carpeta"),
+    (
+        "New images saved there (screenshots, renders) appear on this board.",
+        "Les imatges noves que s'hi desin (captures, renders) apareixen en aquest tauler.",
+    ),
+    ("Choose folder…", "Triar carpeta…"),
+    ("Folder to watch", "Carpeta per vigilar"),
+    ("or paste a folder path", "o enganxa el camí d'una carpeta"),
+    ("Watch", "Vigilar"),
+    ("Watching {}", "Vigilant {}"),
+    ("Can't read it: {}", "No es pot llegir: {}"),
+    ("Add the {} already there", "Afegir les {} que ja hi ha"),
+    ("Stop watching", "Deixar de vigilar"),
+    ("Normal view", "Vista normal"),
+    ("Values: 3 tones", "Valors: 3 tons"),
+    ("Values: 5 tones", "Valors: 5 tons"),
+    ("Saturation map", "Mapa de saturació"),
+    ("Noise / detail map", "Mapa de soroll / detall"),
+    ("Squint (big shapes)", "Ulls aclucats (formes grans)"),
+    ("No guide", "Sense guia"),
+    ("Rule of thirds", "Regla dels terços"),
+    ("Phi grid", "Quadrícula phi"),
+    ("Golden spiral", "Espiral àuria"),
+    ("Diagonals + reciprocals", "Diagonals + recíproques"),
+    ("Center cross", "Creu central"),
+    ("Top left", "A dalt a l'esquerra"),
+    ("Top right", "A dalt a la dreta"),
+    ("Bottom left", "A baix a l'esquerra"),
+    ("Bottom right", "A baix a la dreta"),
+    ("Tiled", "En mosaic"),
+    ("Add & move around", "Afegir i moure's"),
+    ("Drag & drop / Ctrl+V", "Arrossegar i deixar anar / Ctrl+V"),
+    (
+        "add images, or any file as a card",
+        "afegir imatges, o qualsevol fitxer com a targeta",
+    ),
+    ("Ctrl+V a web link", "Ctrl+V amb un enllaç"),
+    (
+        "download its picture (or add a link)",
+        "baixar-ne la imatge (o afegir l'enllaç)",
+    ),
+    ("Ctrl+click empty spot", "Ctrl+clic en un lloc buit"),
+    ("add a link card", "afegir una targeta d'enllaç"),
+    ("Double-click a card", "Doble clic en una targeta"),
+    ("open the file or link", "obrir el fitxer o l'enllaç"),
+    ("Scroll / pinch", "Roda / pessic"),
+    ("zoom", "zoom"),
+    (
+        "Right/middle/Space drag",
+        "Arrossegar amb dret/central/Espai",
+    ),
+    ("pan", "moure la vista"),
+    ("fit to view / zoom 100%", "veure-ho tot / zoom 100%"),
+    ("Drag empty space", "Arrossegar en buit"),
+    ("box select", "seleccionar amb un requadre"),
+    ("Shift+click", "Shift+clic"),
+    (
+        "add to / remove from selection",
+        "afegir a / treure de la selecció",
+    ),
+    ("Corner handle", "Cantonada"),
+    ("resize", "canviar la mida"),
+    ("Del", "Supr"),
+    ("remove", "esborrar"),
+    ("undo / redo", "desfer / refer"),
+    ("duplicate", "duplicar"),
+    (
+        "copy as a picture, to paste in any app",
+        "copiar com a imatge, per enganxar a qualsevol app",
+    ),
+    (
+        "Select something to copy",
+        "Selecciona alguna cosa per copiar",
+    ),
+    ("Couldn't copy: {}", "No s'ha pogut copiar: {}"),
+    ("no clipboard", "no hi ha porta-retalls"),
+    (
+        "Copied: paste it in any app",
+        "Copiat: enganxa-ho a qualsevol app",
+    ),
+    (
+        "Copied {} items as one picture",
+        "{} elements copiats com una imatge",
+    ),
+    ("Arrange", "Organitzar"),
+    (
+        "grid arrange / same height",
+        "ordenar en quadrícula / mateixa alçada",
+    ),
+    ("Alt+arrows, Alt+C / M", "Alt+fletxes, Alt+C / M"),
+    ("align", "alinear"),
+    ("space evenly", "espaiar igual"),
+    ("Alt while dragging", "Alt en arrossegar"),
+    ("move without snapping", "moure sense imants"),
+    ("lock / pin to screen", "bloquejar / fixar a la pantalla"),
+    ("frame around selection", "marc al voltant de la selecció"),
+    ("group / ungroup", "agrupar / desagrupar"),
+    ("Ungrouped", "Desagrupat"),
+    ("Grouped {} items", "{} elements agrupats"),
+    (
+        "Select 2 or more items to group",
+        "Selecciona 2 o més elements per agrupar",
+    ),
+    ("Images", "Imatges"),
+    ("rotate 90° cw / ccw", "girar 90° horari / antihorari"),
+    ("mirror", "mirall"),
+    (
+        "crop (drag) / reset crop",
+        "retallar (arrossegar) / desfer el retall",
+    ),
+    ("Double-click image", "Doble clic en una imatge"),
+    ("caption", "peu de foto"),
+    (
+        "focus view, ← → to step through",
+        "vista d'enfocament, ← → per passar",
+    ),
+    (
+        "surprise me: a random image",
+        "sorprèn-me: una imatge a l'atzar",
+    ),
+    ("Study", "Estudi"),
+    (
+        "value, saturation, noise, squint",
+        "valor, saturació, soroll, aclucar",
+    ),
+    ("black & white", "blanc i negre"),
+    ("whole board in values", "tot el tauler en valors"),
+    (
+        "composition guide / turn spiral",
+        "guia de composició / girar l'espiral",
+    ),
+    ("color picker (HSV + value)", "comptagotes (HSV + valor)"),
+    ("6 / 10 color palette", "paleta de 6 / 10 colors"),
+    ("Hold Q", "Mantenir Q"),
+    ("Hold Z", "Mantenir Z"),
+    (
+        "magnifier (scroll to change its zoom)",
+        "lupa (la roda en canvia l'augment)",
+    ),
+    (
+        "radial menu: find similar, web…",
+        "menú radial: semblants, web…",
+    ),
+    ("Notes & drawing", "Notes i dibuix"),
+    ("new note / note color", "nota nova / color de nota"),
+    ("empty image slot", "espai per a imatge"),
+    ("Double-click", "Doble clic"),
+    (
+        "edit a note, frame or slot",
+        "editar una nota, marc o espai",
+    ),
+    (
+        "draw (anywhere) / hide drawings",
+        "dibuixar (on sigui) / amagar dibuixos",
+    ),
+    ("Boards & window", "Taulers i finestra"),
+    (
+        "boards, updates, settings",
+        "taulers, actualitzacions, ajustos",
+    ),
+    ("tags / search", "etiquetes / cercar"),
+    ("export PNG (+ watermark)", "exportar PNG (+ marca d'aigua)"),
+    ("window opacity", "opacitat de la finestra"),
+    ("always on top", "sempre a sobre"),
+    ("show / hide this help", "mostrar / amagar aquesta ajuda"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,19 +1268,37 @@ mod tests {
                         && !["Ctrl", "Shift", "Alt", "Esc", "Enter", "PNG", "HSV"].contains(&w)
                 });
                 if words && !spanish().contains_key(key.as_str()) {
-                    missing.push(key);
+                    missing.push(key.clone());
+                }
+                if words && !catalan().contains_key(key.as_str()) {
+                    missing.push(format!("(Catalan) {key}"));
                 }
             }
         }
         assert!(missing.is_empty(), "no Spanish for: {missing:#?}");
-        for (en, es) in SPANISH {
-            assert_eq!(en.matches("{}").count(), es.matches("{}").count(), "{en}");
+        for (en, translated) in SPANISH.iter().chain(CATALAN) {
+            assert_eq!(
+                en.matches("{}").count(),
+                translated.matches("{}").count(),
+                "{en}"
+            );
         }
         assert_eq!(
             spanish().len(),
             SPANISH.len(),
             "an English line is listed twice"
         );
+        assert_eq!(
+            catalan().len(),
+            CATALAN.len(),
+            "an English line is listed twice"
+        );
+        // Both translations cover exactly the same texts.
+        let mut es: Vec<&str> = SPANISH.iter().map(|(en, _)| *en).collect();
+        let mut ca: Vec<&str> = CATALAN.iter().map(|(en, _)| *en).collect();
+        es.sort_unstable();
+        ca.sort_unstable();
+        assert_eq!(es, ca);
     }
 
     /// The literal texts passed to `tr`/`trf`, plus those in the shortcut table and align

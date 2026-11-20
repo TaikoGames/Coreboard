@@ -71,11 +71,13 @@ impl CoreBoardApp {
     pub(super) fn language_controls(&mut self, ui: &mut egui::Ui) {
         let auto = match crate::i18n::system() {
             crate::i18n::Lang::Spanish => "Español",
+            crate::i18n::Lang::Catalan => "Català",
             crate::i18n::Lang::English => "English",
         };
         let name = |code: &str| match code {
             "en" => "English".to_string(),
             "es" => "Español".to_string(),
+            "ca" => "Català".to_string(),
             _ => trf("Automatic ({})", &[&auto]),
         };
         let before = self.language.clone();
@@ -84,7 +86,7 @@ impl CoreBoardApp {
             egui::ComboBox::from_id_salt("language")
                 .selected_text(name(&self.language))
                 .show_ui(ui, |ui| {
-                    for code in ["auto", "en", "es"] {
+                    for code in ["auto", "en", "es", "ca"] {
                         ui.selectable_value(&mut self.language, code.to_string(), name(code));
                     }
                 });
@@ -208,12 +210,14 @@ impl CoreBoardApp {
                                     .weak(),
                             );
                         });
-                        let notes = if crate::i18n::current() == crate::i18n::Lang::Spanish
-                            && !latest.notes_es.is_empty()
-                        {
-                            &latest.notes_es
-                        } else {
-                            &latest.notes
+                        let notes = match crate::i18n::current() {
+                            crate::i18n::Lang::Spanish if !latest.notes_es.is_empty() => {
+                                &latest.notes_es
+                            }
+                            crate::i18n::Lang::Catalan if !latest.notes_ca.is_empty() => {
+                                &latest.notes_ca
+                            }
+                            _ => &latest.notes,
                         };
                         for note in notes.iter().take(3) {
                             ui.label(egui::RichText::new(format!("• {note}")).small());

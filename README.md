@@ -209,8 +209,9 @@ copy of its board file is kept. Update Core Board to open it.
 
 ## Language
 
-Core Board speaks English and Spanish. It follows your computer's language; to pick one yourself,
-open the Boards window (**Ctrl+O**) and choose under **Language** (Automatic, English, Español).
+Core Board speaks English, Spanish and Catalan. It follows your computer's language; to pick one
+yourself, open the Boards window (**Ctrl+O**) and choose under **Language** (Automatic, English,
+Español, Català).
 
 ## Updates
 
