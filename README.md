@@ -41,7 +41,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | --- | --- |
 | Add images | Drag & drop files, or **Ctrl+V** (image data, copied files, or a web link) |
 | Files & links | Any other file becomes a card; **Ctrl+click** an empty spot to add a link; **double-click** a card to open it |
-| Zoom | Scroll wheel / trackpad pinch (anchored at the cursor) |
+| Zoom | Scroll wheel / trackpad pinch (anchored at the cursor), or **−** / **+** in the bottom-left corner (click the % for 100%, **⤢** to fit everything) |
 | Pan | Right or middle drag, or hold **Space** and drag |
 | Select | Click; **Shift/Ctrl+click** to toggle; drag on empty space to box-select |
 | Move | Drag selected images |
@@ -272,7 +272,8 @@ previews show) is downloaded. Pasting onto a selected empty slot fills the slot.
 ## Mini-map
 
 While part of the board is off screen, a small overview sits in the bottom-right corner with the
-visible part outlined. Click in it to glide there, or drag in it to move around. Untick
+visible part outlined. Click in it to glide there, or drag in it to move around: the map holds
+still while you drag, and the view follows the pointer. Untick
 **Mini-map** in the Boards window (**Ctrl+O**) to hide it.
 
 ## Surprise me

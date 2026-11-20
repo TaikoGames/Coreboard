@@ -4,6 +4,16 @@
 use super::*;
 
 const MAP_W: f32 = 200.0;
+
+/// What a press in the map does to the view.
+enum Jump {
+    /// Glide over to center this spot (world).
+    Glide(Pos2),
+    /// Center this spot at once.
+    Center(Pos2),
+    /// Move by this much (world), following a drag.
+    By(Vec2),
+}
 const MAP_H: f32 = 140.0;
 
 /// The world rect covering every item that lives on the board (pinned ones float above it).
@@ -32,11 +42,16 @@ impl CoreBoardApp {
             self.to_world(canvas, canvas.min),
             self.to_world(canvas, canvas.max),
         );
-        if view.contains_rect(bounds) {
+        // While dragging in it, the map holds still (it would otherwise resize as the view
+        // moves, shifting under the pointer and running away).
+        let frozen = self.minimap_drag;
+        if frozen.is_none() && view.contains_rect(bounds) {
             return;
         }
-        let area = bounds.union(view);
-        let area = area.expand(area.width().max(area.height()) * 0.03);
+        let area = frozen.unwrap_or_else(|| {
+            let area = bounds.union(view);
+            area.expand(area.width().max(area.height()) * 0.03)
+        });
         let scale = map_scale(area);
         let size = area.size() * scale;
         let to_map = move |origin: Pos2, p: Pos2| origin + (p - area.min) * scale;
@@ -66,6 +81,8 @@ impl CoreBoardApp {
             .collect();
 
         let mut jump = None;
+        let mut drag_start = false;
+        let mut drag_end = false;
         egui::Area::new(egui::Id::unique("coreboard-minimap"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
@@ -142,29 +159,57 @@ impl CoreBoardApp {
                 if response.hovered() {
                     ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
-                if let Some(p) = response.interact_pointer_pos()
-                    && (response.clicked() || response.dragged())
+                if response.drag_started()
+                    && let Some(p) = response.interact_pointer_pos()
                 {
-                    let world = area.min + (p - rect.min) / scale;
-                    jump = Some((world, response.dragged()));
+                    // Grabbing outside the outlined part first brings it under the pointer.
+                    if !shown.contains(p) {
+                        jump = Some(Jump::Center(area.min + (p - rect.min) / scale));
+                    }
+                    drag_start = true;
+                } else if response.dragged() {
+                    // Then the view follows the pointer by exactly as much as it moves.
+                    let moved = response.drag_delta() / scale;
+                    if moved != Vec2::ZERO {
+                        jump = Some(Jump::By(moved));
+                    }
+                } else if response.clicked()
+                    && let Some(p) = response.interact_pointer_pos()
+                {
+                    jump = Some(Jump::Glide(area.min + (p - rect.min) / scale));
                 }
+                drag_end = response.drag_stopped();
             });
 
-        // Center the view on the spot: glide there on a click, follow the pointer while dragging.
-        if let Some((world, dragging)) = jump {
-            let zoom = self.board.view.zoom;
+        if drag_start {
+            self.minimap_drag = Some(area);
+        }
+        if drag_end {
+            self.minimap_drag = None;
+        }
+        let zoom = self.board.view.zoom;
+        let centered = |world: Pos2| {
             let offset = canvas.center() - canvas.min - world.to_vec2() * zoom;
-            let to = board::View {
+            board::View {
                 offset: [offset.x, offset.y],
                 zoom,
-            };
-            if dragging {
-                self.stop_motion();
-                self.board.view = to;
-                self.touch();
-            } else {
-                self.fly_view(to);
             }
+        };
+        match jump {
+            // A click glides there.
+            Some(Jump::Glide(world)) => self.fly_view(centered(world)),
+            Some(Jump::Center(world)) => {
+                self.stop_motion();
+                self.board.view = centered(world);
+                self.touch();
+            }
+            Some(Jump::By(moved)) => {
+                self.stop_motion();
+                self.board.view.offset[0] -= moved.x * zoom;
+                self.board.view.offset[1] -= moved.y * zoom;
+                self.touch();
+            }
+            None => {}
         }
     }
 }

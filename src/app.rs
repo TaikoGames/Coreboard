@@ -63,6 +63,8 @@ type Decoded = (
 /// Color picking reads from copies this size, which is plenty for a single pixel readout.
 const SAMPLE_SIDE: u32 = 1024;
 type Exported = Result<std::path::PathBuf, String>;
+/// Room for the zoom controls in the bottom-left corner.
+const ZOOM_CONTROLS_WIDTH: f32 = 150.0;
 const RADIAL_INNER: f32 = 34.0;
 const RADIAL_OUTER: f32 = 118.0;
 
@@ -230,6 +232,8 @@ pub struct CoreBoardApp {
     motion: motion::Motion,
     animations: bool,
     minimap: bool,
+    /// The mini-map's world area, held still while it's being dragged in.
+    minimap_drag: Option<Rect>,
     /// How much the magnifier (hold Z) enlarges.
     loupe_power: f32,
     check_updates: bool,
@@ -340,6 +344,7 @@ impl CoreBoardApp {
             animations: boards::settings().animations,
             minimap: boards::settings().minimap,
             loupe_power: 3.0,
+            minimap_drag: None,
             check_updates: boards::settings().check_updates,
             language: boards::settings().language,
             updates: updates::Updates::default(),
@@ -3087,9 +3092,9 @@ impl CoreBoardApp {
         }
 
         // Status line.
+        // (The zoom shows in the zoom controls just left of this.)
         let status = format!(
-            "{:.0}%  ·  {}{}{}{}",
-            zoom * 100.0,
+            "{}{}{}{}",
             trf("{} items", &[&self.board.items.len()]),
             if opacity < 1.0 {
                 format!("  ·  {}", trf("opacity {}%", &[&(opacity * 100.0).round()]))
@@ -3116,7 +3121,7 @@ impl CoreBoardApp {
             },
         );
         painter.text(
-            canvas.left_bottom() + vec2(10.0, -8.0),
+            canvas.left_bottom() + vec2(ZOOM_CONTROLS_WIDTH + 22.0, -8.0),
             Align2::LEFT_BOTTOM,
             status,
             FontId::monospace(12.0),
@@ -3190,6 +3195,66 @@ impl CoreBoardApp {
         }
     }
 
+    /// − 43% + ⤢ in the bottom-left corner: zoom out, back to 100%, zoom in, fit everything.
+    fn zoom_controls(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let mut action = None;
+        egui::Area::new(egui::Id::unique("coreboard-zoom"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(canvas.left_bottom() + vec2(6.0, -32.0))
+            .show(ctx, |ui| {
+                ui.set_width(ZOOM_CONTROLS_WIDTH);
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.horizontal(|ui| {
+                    let small = |text: &str| {
+                        egui::Button::new(egui::RichText::new(text).size(16.0))
+                            .min_size(vec2(28.0, 24.0))
+                    };
+                    if ui.add(small("−")).on_hover_text(tr("Zoom out")).clicked() {
+                        action = Some(1.0 / 1.25);
+                    }
+                    let percent = format!("{:.0}%", self.board.view.zoom * 100.0);
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(percent).monospace().size(12.5))
+                                .min_size(vec2(52.0, 24.0))
+                                .frame(false),
+                        )
+                        .on_hover_text(tr("Back to 100%"))
+                        .clicked()
+                    {
+                        action = Some(0.0);
+                    }
+                    if ui.add(small("+")).on_hover_text(tr("Zoom in")).clicked() {
+                        action = Some(1.25);
+                    }
+                    if ui
+                        .add(small("⤢"))
+                        .on_hover_text(tr("Fit everything (F)"))
+                        .clicked()
+                    {
+                        action = Some(-1.0);
+                    }
+                });
+            });
+        let Some(action) = action else {
+            return;
+        };
+        if action < 0.0 {
+            self.fit(canvas);
+            return;
+        }
+        // Work out the new view around the window's center, then glide there.
+        let before = self.board.view.clone();
+        let target = if action == 0.0 {
+            1.0
+        } else {
+            before.zoom * action
+        };
+        self.zoom_around(canvas, canvas.center(), target);
+        let to = std::mem::replace(&mut self.board.view, before);
+        self.fly_view(to);
+    }
+
     /// A close button on the help panel, and a "?" button to open it when it's closed.
     fn help_buttons(&mut self, ctx: &egui::Context, canvas: Rect) {
         let (at, label, tip) = match self.help_rect.filter(|_| self.show_help) {
@@ -3236,6 +3301,7 @@ impl CoreBoardApp {
         self.link_prompt_window(ctx, canvas);
         self.minimap(ctx, canvas);
         self.help_buttons(ctx, canvas);
+        self.zoom_controls(ctx, canvas);
         self.export_notice_window(ctx);
         self.paint_loupe(ctx, canvas);
         self.update_banner(ctx, canvas);
