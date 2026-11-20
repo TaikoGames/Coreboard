@@ -305,6 +305,19 @@ const SPANISH: &[(&str, &str)] = &[
     ),
     ("Couldn't open it: {}", "No se pudo abrir: {}"),
     ("Opening…", "Abriendo…"),
+    ("Opening the PDF…", "Abriendo el PDF…"),
+    ("it's password-protected", "tiene contraseña"),
+    ("it couldn't be read", "no se pudo leer"),
+    ("it has no pages", "no tiene páginas"),
+    (
+        "Couldn't show the PDF's pages: {}",
+        "No se pudieron mostrar las páginas del PDF: {}",
+    ),
+    (
+        "Added the first {} of {} pages from {}",
+        "Añadidas las primeras {} de {} páginas de {}",
+    ),
+    ("Added {} pages from {}", "Añadidas {} páginas de {}"),
     ("Opening the video…", "Abriendo el vídeo…"),
     ("Add a link", "Añadir un enlace"),
     (
@@ -537,6 +550,21 @@ const SPANISH: &[(&str, &str)] = &[
     ("remove", "borrar"),
     ("undo / redo", "deshacer / rehacer"),
     ("duplicate", "duplicar"),
+    (
+        "copy as a picture, to paste in any app",
+        "copiar como imagen, para pegar en cualquier app",
+    ),
+    ("Select something to copy", "Selecciona algo para copiar"),
+    ("Couldn't copy: {}", "No se pudo copiar: {}"),
+    ("no clipboard", "no hay portapapeles"),
+    (
+        "Copied: paste it in any app",
+        "Copiado: pégalo en cualquier app",
+    ),
+    (
+        "Copied {} items as one picture",
+        "{} elementos copiados como una imagen",
+    ),
     ("Arrange", "Organizar"),
     (
         "grid arrange / same height",
@@ -549,6 +577,13 @@ const SPANISH: &[(&str, &str)] = &[
     ("move without snapping", "mover sin imanes"),
     ("lock / pin to screen", "bloquear / fijar a la pantalla"),
     ("frame around selection", "marco alrededor de la selección"),
+    ("group / ungroup", "agrupar / desagrupar"),
+    ("Ungrouped", "Desagrupado"),
+    ("Grouped {} items", "{} elementos agrupados"),
+    (
+        "Select 2 or more items to group",
+        "Selecciona 2 o más elementos para agrupar",
+    ),
     ("Images", "Imágenes"),
     ("rotate 90° cw / ccw", "girar 90° horario / antihorario"),
     ("mirror", "espejo"),
@@ -635,6 +670,11 @@ mod tests {
             include_str!("app/motion.rs"),
             include_str!("board.rs"),
             include_str!("export.rs"),
+            include_str!("pdf.rs"),
+            include_str!("app/copy.rs"),
+            include_str!("app/pdfs.rs"),
+            include_str!("app/groups.rs"),
+            include_str!("app/loupe.rs"),
         ];
         let mut missing = Vec::new();
         for source in sources {

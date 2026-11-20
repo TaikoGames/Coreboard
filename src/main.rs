@@ -8,6 +8,7 @@ mod export;
 mod filters;
 mod i18n;
 mod library;
+mod pdf;
 mod player;
 mod update;
 mod web;

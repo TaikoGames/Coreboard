@@ -19,12 +19,15 @@ use crate::i18n::{tr, trf};
 use crate::library::{self, Tone};
 
 mod cards;
+mod copy;
 mod draw;
 mod focus;
+mod groups;
 mod loupe;
 mod minimap;
 mod motion;
 mod organize;
+mod pdfs;
 mod slots;
 mod updates;
 mod watch;
@@ -270,6 +273,10 @@ pub struct CoreBoardApp {
     thumbs: HashMap<std::path::PathBuf, Texture>,
     thumb_tx: Sender<Thumb>,
     thumb_rx: Receiver<Thumb>,
+    pdf_tx: Sender<pdfs::RenderedPdf>,
+    pdf_rx: Receiver<pdfs::RenderedPdf>,
+    /// PDFs whose pages are being rendered.
+    rendering_pdfs: usize,
     fetch_tx: Sender<Fetched>,
     fetch_rx: Receiver<Fetched>,
     preview_tx: Sender<cards::Previewed>,
@@ -305,6 +312,7 @@ impl CoreBoardApp {
         let (find_tx, find_rx) = channel();
         let (thumb_tx, thumb_rx) = channel();
         let (fetch_tx, fetch_rx) = channel();
+        let (pdf_tx, pdf_rx) = channel();
         let (preview_tx, preview_rx) = channel();
         let board = store.load();
         let show_help = board.items.is_empty() && store.unreadable.is_none();
@@ -363,6 +371,9 @@ impl CoreBoardApp {
             thumb_rx,
             fetch_tx,
             fetch_rx,
+            pdf_tx,
+            pdf_rx,
+            rendering_pdfs: 0,
             preview_tx,
             preview_rx,
             preview_asked: HashSet::new(),
@@ -707,9 +718,18 @@ impl CoreBoardApp {
         let zoom = self.board.view.zoom;
         self.checkpoint();
         self.selection.clear();
+        // Copies of a group form a new group of their own.
+        let mut new_groups: HashMap<u64, u64> = HashMap::new();
         for mut item in picked {
             item.id = self.board.next_id;
             self.board.next_id += 1;
+            if let Some(g) = item.group {
+                let next = &mut self.board.next_id;
+                item.group = Some(*new_groups.entry(g).or_insert_with(|| {
+                    *next += 1;
+                    *next - 1
+                }));
+            }
             item.pos[0] += shift;
             if let Some(pin) = &mut item.pinned {
                 pin[0] += shift * zoom;
@@ -1431,6 +1451,11 @@ impl CoreBoardApp {
             .filter_map(|p| Some((std::fs::read(p).ok()?, Some(p.as_path()))))
             .collect();
         self.import_all(canvas, at, sources);
+        let (pdfs, others): (Vec<_>, Vec<_>) =
+            others.into_iter().partition(|p| pdfs::is_pdf_file(p));
+        for pdf in pdfs {
+            self.import_pdf(canvas, at, pdf);
+        }
         self.add_file_cards(canvas, at + vec2(0.0, 40.0), others);
     }
 
@@ -2267,6 +2292,12 @@ impl CoreBoardApp {
                 }
             }
             self.import_all(canvas, anchor, sources);
+            // PDFs land as their pages; everything else as cards.
+            let (pdfs, others): (Vec<_>, Vec<_>) =
+                others.into_iter().partition(|p| pdfs::is_pdf_file(p));
+            for pdf in pdfs {
+                self.import_pdf(canvas, anchor, pdf);
+            }
             if !others.is_empty() {
                 let at = anchor + vec2(0.0, 40.0);
                 self.add_file_cards(canvas, at, others);
@@ -2275,10 +2306,13 @@ impl CoreBoardApp {
 
         // Keyboard, unless a text field (note, frame title, dialog) is taking typing.
         let mut paste_requested = None;
+        // Ctrl+C can arrive as a copy event, a key press or both: copy once.
+        let mut copy_requested = false;
         let typing = ctx.egui_wants_keyboard_input();
         for event in events.iter().filter(|_| !typing) {
             match event {
                 Event::Paste(text) => paste_requested = Some(Some(text.clone())),
+                Event::Copy => copy_requested = true,
                 // Hold Q for the radial menu; releasing it picks the slice pointed at.
                 Event::Key {
                     key: Key::Q,
@@ -2313,6 +2347,8 @@ impl CoreBoardApp {
                     // Modified keys first, so they aren't caught by the plain-key arms below.
                     Key::L if !m.command && m.shift => self.toggle_pin(canvas),
                     Key::L if !m.command => self.toggle_lock(),
+                    Key::C if m.command => copy_requested = true,
+                    Key::G if m.command && m.shift => self.toggle_group(),
                     Key::T if m.command => self.open_tags_window(),
                     Key::D if m.command => self.duplicate_selection(),
                     Key::F if m.command => self.open_search(),
@@ -2423,6 +2459,9 @@ impl CoreBoardApp {
                 _ => {}
             }
         }
+        if copy_requested {
+            self.copy_selection();
+        }
         if let Some(text) = paste_requested {
             self.paste(canvas, anchor, text);
         }
@@ -2501,13 +2540,18 @@ impl CoreBoardApp {
                 self.checkpoint();
                 Drag::Resize { id, aspect }
             } else if let Some(id) = self.hit(canvas, pos) {
+                // A grouped item brings its whole group.
+                let members = self.group_of(id);
                 if modifiers.shift || modifiers.command {
-                    if !self.selection.remove(&id) {
-                        self.selection.insert(id);
+                    if self.selection.contains(&id) {
+                        for m in &members {
+                            self.selection.remove(m);
+                        }
+                    } else {
+                        self.selection.extend(members);
                     }
                 } else if !self.selection.contains(&id) {
-                    self.selection.clear();
-                    self.selection.insert(id);
+                    self.selection = members.into_iter().collect();
                 }
                 self.checkpoint();
                 self.raise_selection();
@@ -2648,7 +2692,7 @@ impl CoreBoardApp {
                     if !(modifiers.shift || modifiers.command)
                         && let Some(id) = pointer.interact_pos().and_then(|p| self.hit(canvas, p))
                     {
-                        self.selection = HashSet::from([id]);
+                        self.selection = self.group_of(id).into_iter().collect();
                     }
                 }
                 Drag::Draw { item, points } => self.finish_stroke(canvas, item, points),
@@ -2692,6 +2736,7 @@ impl CoreBoardApp {
                                 self.selection.insert(item.id);
                             }
                         }
+                        self.select_whole_groups();
                     }
                 }
                 _ => {}
@@ -2948,6 +2993,7 @@ impl CoreBoardApp {
             }
         }
 
+        self.paint_group_outlines(&painter, canvas);
         for (rect, item) in badge_rows {
             self.draw_badges(&painter, rect, &item);
         }
@@ -3238,6 +3284,7 @@ impl eframe::App for CoreBoardApp {
         self.receive_finds();
         self.receive_thumbs(&ctx);
         self.receive_fetches(&ctx, canvas);
+        self.receive_pdfs(&ctx, canvas);
         self.request_previews();
         self.receive_previews();
         self.receive_updates(&ctx);
@@ -3661,6 +3708,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Del", "remove"),
             ("Ctrl+Z / Ctrl+Shift+Z", "undo / redo"),
             ("Ctrl+D", "duplicate"),
+            ("Ctrl+C", "copy as a picture, to paste in any app"),
         ],
     ),
     (
@@ -3672,6 +3720,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Alt while dragging", "move without snapping"),
             ("L / Shift+L", "lock / pin to screen"),
             ("Ctrl+G", "frame around selection"),
+            ("Ctrl+Shift+G", "group / ungroup"),
         ],
     ),
     (

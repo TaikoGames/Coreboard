@@ -60,6 +60,9 @@ pub struct Item {
     /// A short line of text shown under an image, e.g. "Sargent, 1885, rim light".
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub caption: String,
+    /// Items with the same group are picked and moved together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,6 +332,7 @@ impl Default for Item {
             tags: Vec::new(),
             marks: Vec::new(),
             caption: String::new(),
+            group: None,
         }
     }
 }

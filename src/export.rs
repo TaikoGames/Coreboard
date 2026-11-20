@@ -35,7 +35,38 @@ pub fn export_png(
     Ok(path)
 }
 
-fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<RgbaImage, String> {
+/// An image item's picture as the board shows it, at full resolution: study view `filter`,
+/// crop, quarter turns and mirroring applied.
+pub fn shown_image(images_dir: &Path, item: &Item, filter: Filter) -> Result<DynamicImage, String> {
+    let path = images_dir.join(&item.file);
+    let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
+    let mut img = DynamicImage::ImageRgba8(filters::apply(img, filter));
+    if item.is_cropped() {
+        let (w, h) = (img.width() as f32, img.height() as f32);
+        let [u0, v0, u1, v1] = item.crop;
+        let (x, y) = ((u0 * w).round() as u32, (v0 * h).round() as u32);
+        let cw = (((u1 - u0) * w).round() as u32).max(1);
+        let ch = (((v1 - v0) * h).round() as u32).max(1);
+        img = img.crop_imm(x, y, cw, ch);
+    }
+    img = match item.rotation % 4 {
+        1 => img.rotate90(),
+        2 => img.rotate180(),
+        3 => img.rotate270(),
+        _ => img,
+    };
+    if item.flip_x {
+        img = img.fliph();
+    }
+    Ok(img)
+}
+
+/// Renders `items` into one picture, the way an export does (no watermark when it's empty).
+pub fn render(
+    images_dir: &Path,
+    items: &[Item],
+    watermark: &Watermark,
+) -> Result<RgbaImage, String> {
     if items.is_empty() {
         return Err("nothing to export".into());
     }
@@ -120,27 +151,9 @@ fn render(images_dir: &Path, items: &[Item], watermark: &Watermark) -> Result<Rg
                 continue;
             }
         }
-        let path = images_dir.join(&item.file);
-        let img = image::open(&path).map_err(|e| format!("{}: {e}", item.file))?;
-        let mut img = DynamicImage::ImageRgba8(filters::apply(img, Filter::for_item(item)));
-        if item.is_cropped() {
-            let (w, h) = (img.width() as f32, img.height() as f32);
-            let [u0, v0, u1, v1] = item.crop;
-            let (x, y) = ((u0 * w).round() as u32, (v0 * h).round() as u32);
-            let cw = (((u1 - u0) * w).round() as u32).max(1);
-            let ch = (((v1 - v0) * h).round() as u32).max(1);
-            img = img.crop_imm(x, y, cw, ch);
-        }
-        img = match item.rotation % 4 {
-            1 => img.rotate90(),
-            2 => img.rotate180(),
-            3 => img.rotate270(),
-            _ => img,
-        };
-        if item.flip_x {
-            img = img.fliph();
-        }
-        let img = img.resize_exact(w, h, FilterType::CatmullRom).to_rgba8();
+        let img = shown_image(images_dir, item, Filter::for_item(item))?
+            .resize_exact(w, h, FilterType::CatmullRom)
+            .to_rgba8();
         imageops::overlay(&mut canvas, &img, x, y);
         let marks: Vec<Mark> = item.marks.iter().map(|m| item.local_mark(m)).collect();
         draw_marks(&mut canvas, (x, y, w, h), &marks, scale);

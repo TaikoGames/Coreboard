@@ -235,6 +235,26 @@ your file browser. The file stays where it is: the card is a shortcut to it.
 page's title and its preview picture (the one chat apps show for links). Double-click it to open the page. Pasting a link to a page without a picture also
 makes a link card.
 
+## Copy a picture
+
+Select an image and press **Ctrl+C**, then paste it into Photoshop, Krita, Blender, a chat or any
+other app. It's copied at full resolution as the board shows it: crop, turns, mirroring and study
+view included. With several items selected, they're copied as one picture, like an export.
+
+## PDFs
+
+Drop or paste a PDF (an art book, a model sheet, a magazine) and its pages land on the board as
+images, laid out in a grid and labeled with the file name and page number. Up to 40 pages are
+imported from one PDF. A PDF that can't be read (for example, password-protected) goes on the
+board as a card that opens it.
+
+## Groups
+
+Select a few items and press **Ctrl+Shift+G** to group them: clicking any of them then picks the
+whole group, so it moves, copies and deletes as one, with a dashed outline while it's selected.
+Press **Ctrl+Shift+G** again on a group to ungroup it. (**Ctrl+G** still puts a frame around the
+selection.)
+
 ## YouTube videos
 
 Paste a YouTube link (or add one with **Ctrl+click**) and it becomes a video card with the video's

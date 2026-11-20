@@ -249,7 +249,12 @@ impl CoreBoardApp {
             )
         });
         let typing = ctx.egui_wants_keyboard_input();
+        let mut copy = false;
         for event in events.iter().filter(|_| !typing) {
+            if matches!(event, Event::Copy) {
+                copy = true;
+                continue;
+            }
             let Event::Key {
                 key,
                 pressed: true,
@@ -260,6 +265,8 @@ impl CoreBoardApp {
                 continue;
             };
             match key {
+                // The image on screen is the selection, so this copies it.
+                Key::C if m.command => copy = true,
                 Key::Escape | Key::Enter | Key::Space => self.close_focus(),
                 Key::S if !m.command && !m.shift => self.surprise(ctx),
                 Key::ArrowRight | Key::ArrowDown | Key::PageDown => self.step_focus(true),
@@ -293,6 +300,9 @@ impl CoreBoardApp {
                 }
                 _ => {}
             }
+        }
+        if copy {
+            self.copy_selection();
         }
         let Some(focus) = &mut self.focus else {
             return;
