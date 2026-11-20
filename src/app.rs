@@ -19,6 +19,7 @@ use crate::i18n::{tr, trf};
 use crate::library::{self, Tone};
 
 mod cards;
+mod context;
 mod copy;
 mod draw;
 mod focus;
@@ -287,6 +288,12 @@ pub struct CoreBoardApp {
     preview_rx: Receiver<cards::Previewed>,
     /// Link cards whose preview was already asked for: (board generation, card id).
     preview_asked: HashSet<(u64, u64)>,
+    /// The next cards belong to the drop or paste that just added pictures (one undo step).
+    join_cards: bool,
+    /// When the selection was last nudged with an arrow key (a burst is one undo step).
+    last_nudge: Option<Instant>,
+    /// What the last right-click landed on, for its menu.
+    context: Option<context::ContextTarget>,
     /// The "add a link" box (Ctrl+click on an empty spot).
     link_prompt: Option<cards::LinkPrompt>,
     /// Web links being downloaded.
@@ -383,6 +390,9 @@ impl CoreBoardApp {
             preview_rx,
             preview_asked: HashSet::new(),
             link_prompt: None,
+            join_cards: false,
+            last_nudge: None,
+            context: None,
             fetching: 0,
             show_tags: false,
             tags_focus_pending: false,
@@ -1325,7 +1335,13 @@ impl CoreBoardApp {
     // ---------------------------------------------------------------- import
 
     /// Adds images to the board, cascading them from `at` (screen space).
-    fn import_all(&mut self, canvas: Rect, at: Pos2, mut sources: Vec<(Vec<u8>, Option<&Path>)>) {
+    /// Adds pictures at `at`; returns how many were added.
+    fn import_all(
+        &mut self,
+        canvas: Rect,
+        at: Pos2,
+        mut sources: Vec<(Vec<u8>, Option<&Path>)>,
+    ) -> usize {
         // Dropped or pasted onto an empty slot: the first image fills it.
         if !sources.is_empty()
             && let Some(slot) = self.slot_at(canvas, at)
@@ -1388,11 +1404,13 @@ impl CoreBoardApp {
         }
         if !unreadable.is_empty() {
             let at = self.to_screen(canvas, cursor);
+            self.join_cards = added > 0;
             self.add_file_cards(canvas, at, unreadable);
         }
         if failed > 0 {
             self.toast(tr("That isn't a picture I can read").into());
         }
+        added
     }
 
     fn paste(&mut self, canvas: Rect, at: Pos2, pasted_text: Option<String>) {
@@ -1455,12 +1473,13 @@ impl CoreBoardApp {
             .iter()
             .filter_map(|p| Some((std::fs::read(p).ok()?, Some(p.as_path()))))
             .collect();
-        self.import_all(canvas, at, sources);
+        let added = self.import_all(canvas, at, sources);
         let (pdfs, others): (Vec<_>, Vec<_>) =
             others.into_iter().partition(|p| pdfs::is_pdf_file(p));
         for pdf in pdfs {
             self.import_pdf(canvas, at, pdf);
         }
+        self.join_cards = added > 0;
         self.add_file_cards(canvas, at + vec2(0.0, 40.0), others);
     }
 
@@ -2296,7 +2315,7 @@ impl CoreBoardApp {
                     others.push(path.to_path_buf());
                 }
             }
-            self.import_all(canvas, anchor, sources);
+            let added = self.import_all(canvas, anchor, sources);
             // PDFs land as their pages; everything else as cards.
             let (pdfs, others): (Vec<_>, Vec<_>) =
                 others.into_iter().partition(|p| pdfs::is_pdf_file(p));
@@ -2305,6 +2324,7 @@ impl CoreBoardApp {
             }
             if !others.is_empty() {
                 let at = anchor + vec2(0.0, 40.0);
+                self.join_cards = added > 0;
                 self.add_file_cards(canvas, at, others);
             }
         }
@@ -2365,6 +2385,11 @@ impl CoreBoardApp {
                     Key::M if m.alt => self.align_selection(Align::CenterY),
                     Key::H if m.alt => self.distribute_selection(true),
                     Key::V if m.alt => self.distribute_selection(false),
+                    Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown
+                        if !m.command =>
+                    {
+                        self.nudge(*key, m.shift)
+                    }
                     Key::Delete | Key::Backspace => self.delete_selection(),
                     Key::A if m.command => {
                         self.selection = self.board.items.iter().map(|i| i.id).collect();
@@ -3335,6 +3360,7 @@ impl eframe::App for CoreBoardApp {
             }
         } else if !self.show_export && !self.show_boards && !self.show_tags {
             self.handle_input(ui, canvas);
+            self.context_menu(&ctx, canvas, &response);
         }
         // After input, so a change made this frame (undo, align, grid...) glides from where
         // things were drawn last frame instead of jumping.
@@ -3784,6 +3810,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Alt+arrows, Alt+C / M", "align"),
             ("Alt+H / Alt+V", "space evenly"),
             ("Alt while dragging", "move without snapping"),
+            ("Arrows / Shift+arrows", "nudge 1 / 10 points"),
             ("L / Shift+L", "lock / pin to screen"),
             ("Ctrl+G", "frame around selection"),
             ("Ctrl+Shift+G", "group / ungroup"),

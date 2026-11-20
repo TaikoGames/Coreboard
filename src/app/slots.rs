@@ -134,7 +134,8 @@ impl CoreBoardApp {
                 .board
                 .items
                 .iter()
-                .find(|i| i.id == **id && i.is_image())
+                // A locked or pinned image stays where it is: it can't go into a slot.
+                .find(|i| i.id == **id && i.is_image() && i.movable())
                 .map(|i| i.id),
             _ => None,
         }

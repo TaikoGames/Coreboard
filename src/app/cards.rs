@@ -22,11 +22,15 @@ impl CoreBoardApp {
     /// Puts a card for each of `kinds` (files or links) at `at` (screen), slightly fanned out,
     /// and selects them.
     pub(super) fn add_cards(&mut self, canvas: Rect, at: Pos2, kinds: Vec<Kind>) -> Vec<u64> {
+        // Part of a drop or paste that already added pictures: one undo step, one selection.
+        let joined = std::mem::take(&mut self.join_cards);
         if kinds.is_empty() {
             return Vec::new();
         }
-        self.checkpoint();
-        self.selection.clear();
+        if !joined {
+            self.checkpoint();
+            self.selection.clear();
+        }
         let zoom = self.board.view.zoom;
         // Readable at any zoom: never smaller than its normal size on screen.
         let scale = (1.0 / zoom).max(1.0);

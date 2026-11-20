@@ -289,6 +289,19 @@ Hold **Z** to look closer without zooming the board: a round magnifying glass fo
 pointer and shows the pictures under it enlarged (3× to start). **Scroll** while holding Z to
 change how much it enlarges, from 2× to 8×. Let go of Z and it's gone.
 
+## Right-click menu
+
+**Right-click** anything to see what you can do with it, each action with its shortcut next to
+it, so the menu teaches the keys as you go. On a picture: focus view, copy, crop, rotate, mirror,
+study views, guides, palette, find similar, caption, lock, pin, group and delete. On empty board:
+paste, add a note, link or image slot, fit everything, surprise me, boards, export and help.
+Right-*dragging* still pans the board.
+
+## Nudge with the arrow keys
+
+With something selected, the **arrow keys** move it one point at a time, and **Shift+arrows** ten
+at a time, for lining things up exactly. A run of nudges undoes in one step.
+
 ## Focus view
 
 Press **Enter** to study one image without the rest of the board around it. The selected image (or

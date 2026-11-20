@@ -608,3 +608,51 @@ impl CoreBoardApp {
         }
     }
 }
+
+impl CoreBoardApp {
+    /// Moves the selection by one screen point with an arrow key (ten with Shift). A burst of
+    /// nudges is one undo step.
+    pub(super) fn nudge(&mut self, key: Key, big: bool) {
+        let step = if big { 10.0 } else { 1.0 };
+        let screen = match key {
+            Key::ArrowLeft => vec2(-step, 0.0),
+            Key::ArrowRight => vec2(step, 0.0),
+            Key::ArrowUp => vec2(0.0, -step),
+            Key::ArrowDown => vec2(0.0, step),
+            _ => return,
+        };
+        if !self
+            .board
+            .items
+            .iter()
+            .any(|i| self.selection.contains(&i.id) && !i.locked)
+        {
+            return;
+        }
+        if self
+            .last_nudge
+            .is_none_or(|t| t.elapsed() > Duration::from_millis(900))
+        {
+            self.checkpoint();
+        }
+        self.last_nudge = Some(Instant::now());
+        let world = screen / self.board.view.zoom;
+        for item in &mut self.board.items {
+            if !self.selection.contains(&item.id) || item.locked {
+                continue;
+            }
+            // Pinned items live in screen space.
+            match &mut item.pinned {
+                Some(pin) => {
+                    pin[0] += screen.x;
+                    pin[1] += screen.y;
+                }
+                None => {
+                    item.pos[0] += world.x;
+                    item.pos[1] += world.y;
+                }
+            }
+        }
+        self.touch();
+    }
+}
