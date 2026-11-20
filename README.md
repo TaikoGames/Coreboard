@@ -61,7 +61,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Export PNG | **Ctrl+E** (selection, or everything; optional watermark) |
 | Study views | **V** / **Shift+V** cycle value (3 or 5 tones), saturation, noise/detail and squint |
 | Composition guide | **C** cycles thirds, phi grid, golden spiral, diagonals, center; **Shift+C** turns the spiral |
-| Color picker | **I**, then hover: hex, HSV and perceptual value (L*) |
+| Color picker | **I**, then hover: hex, HSV and perceptual value (L*); click copies the hex |
 | Note | **N** adds a note at the cursor and starts typing; **Shift+N** changes its color |
 | Image slot | **E** adds an empty, labeled slot; drop, paste or drag an image onto it to fill it |
 | Frame | **Ctrl+G** wraps the selection in a titled frame (nothing selected: an empty one) |
@@ -71,6 +71,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Caption | **Double-click** an image to write a caption under it |
 | Surprise me | **S** opens a random image from this board or any recent one in focus view |
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
+| Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
@@ -316,6 +317,12 @@ caption and an *image 3 of 7* counter underneath.
 - **Esc**, **Enter**, **Space** or a click on the backdrop shrinks it back into the board, with that
   image selected. The board's view isn't touched.
 
+**Compare two pictures:** select two images and press **Enter** (or right-click → *Compare side by
+side*). They open next to each other, or one above the other when that shows them bigger.
+Scrolling and dragging zoom and pan both together, so the same spot of each stays in view: handy
+for comparing two poses, two lighting setups, or your drawing against its reference. **← →** swap
+the second picture for the others on the board.
+
 ## Captions, duplicates and whole-board values
 
 - **Captions**: double-click an image and type a short caption, e.g. *Sargent, 1885, rim light*
@@ -369,7 +376,8 @@ For painting and drawing reference. Select images, then:
   each corner.
 - **I** toggles the color picker. Hover any image to read its hex color, hue/saturation/value, and
   perceptual value (CIE L*, 0 = black, 100 = white). It always reads the original colors, even
-  when the image is shown in a study view.
+  when the image is shown in a study view. **Click** to copy the color's hex code (like
+  `#A3C14F`) and paste it into your painting app. It works in focus view too.
 
 Values use CIE L* lightness, so the tone bands match how light or dark colors actually look
 (a pure yellow and a pure blue have the same HSV value but very different L*). Study views are

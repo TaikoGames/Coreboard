@@ -640,9 +640,17 @@ impl CoreBoardApp {
 
     /// Original color under `pos`, mapped back through the item's rotation and flip.
     fn sample_at(&self, canvas: Rect, pos: Pos2) -> Option<[u8; 3]> {
+        if self.focus_open() {
+            return self.focus_sample(canvas, pos);
+        }
         let id = self.hit(canvas, pos)?;
         let item = self.board.items.iter().find(|i| i.id == id)?;
         let rect = self.item_screen_rect(canvas, item);
+        self.sample_item(item, rect, pos)
+    }
+
+    /// Original color at `pos` of `item` drawn in `rect`.
+    fn sample_item(&self, item: &Item, rect: Rect, pos: Pos2) -> Option<[u8; 3]> {
         match &item.kind {
             Kind::Image => {}
             Kind::Palette { colors } => {
@@ -668,7 +676,25 @@ impl CoreBoardApp {
         Some([r, g, b])
     }
 
-    fn paint_picker(&self, painter: &egui::Painter, canvas: Rect, pos: Pos2) {
+    /// Copies the color under the pointer as a hex code, for pasting into a painting app.
+    fn copy_picked_color(&mut self, canvas: Rect, pos: Pos2) -> bool {
+        let Some([r, g, b]) = self.sample_at(canvas, pos) else {
+            return false;
+        };
+        let hex = format!("#{r:02X}{g:02X}{b:02X}");
+        let copied = self
+            .clipboard
+            .as_mut()
+            .is_some_and(|c| c.set_text(hex.clone()).is_ok());
+        if copied {
+            self.toast(trf("Copied {}", &[&hex]));
+        } else {
+            self.toast(trf("Couldn't copy: {}", &[&tr("no clipboard")]));
+        }
+        true
+    }
+
+    pub(super) fn paint_picker(&self, painter: &egui::Painter, canvas: Rect, pos: Pos2) {
         let Some([r, g, b]) = self.sample_at(canvas, pos) else {
             return;
         };
@@ -2443,7 +2469,7 @@ impl CoreBoardApp {
                         self.picker = !self.picker;
                         self.toast(
                             if self.picker {
-                                tr("Color picker on: hover an image")
+                                tr("Color picker on: hover an image, click to copy its color")
                             } else {
                                 tr("Color picker off")
                             }
@@ -2536,6 +2562,15 @@ impl CoreBoardApp {
                 None
             }
             (_, press) => press,
+        };
+        // With the color picker on, a click on a picture copies its color instead.
+        let press = match press {
+            Some((pos, egui::PointerButton::Primary))
+                if self.picker && self.copy_picked_color(canvas, pos) =>
+            {
+                None
+            }
+            press => press,
         };
         if press.is_some() {
             // Grabbing the board stops anything coasting or flying.
@@ -3077,6 +3112,7 @@ impl CoreBoardApp {
         }
 
         if self.picker
+            && !self.focus_open()
             && let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
         {
             self.paint_picker(&painter, canvas, pos);
@@ -3824,6 +3860,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("X / Shift+X", "crop (drag) / reset crop"),
             ("Double-click image", "caption"),
             ("Enter", "focus view, ← → to step through"),
+            ("2 images + Enter", "compare them side by side"),
             ("S", "surprise me: a random image"),
         ],
     ),
@@ -3835,7 +3872,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("B", "black & white"),
             ("Shift+B", "whole board in values"),
             ("C / Shift+C", "composition guide / turn spiral"),
-            ("I", "color picker (HSV + value)"),
+            ("I", "color picker (HSV + value); click copies it"),
             ("P / Shift+P", "6 / 10 color palette"),
             ("Hold Q", "radial menu: find similar, web…"),
         ],

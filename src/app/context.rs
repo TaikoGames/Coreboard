@@ -58,7 +58,12 @@ impl CoreBoardApp {
 
     fn image_menu(&mut self, ui: &mut egui::Ui, canvas: Rect, target: ContextTarget) -> bool {
         let id = target.item.unwrap_or_default();
-        if entry(ui, tr("Focus view"), "Enter") {
+        let label = if self.compare_pair().is_some() {
+            tr("Compare side by side")
+        } else {
+            tr("Focus view")
+        };
+        if entry(ui, label, "Enter") {
             self.open_focus(canvas, Some(target.at));
             return true;
         }

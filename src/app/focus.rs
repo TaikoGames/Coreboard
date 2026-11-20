@@ -1,6 +1,10 @@
 //! Focus view: one image big and centered on a dark backdrop, to study it without the rest of
 //! the board around. Arrow keys step through every image on the board in reading order.
 //!
+//! With two images selected it compares them side by side (or one above the other, whichever
+//! shows them bigger). Zooming and panning move both together, so the same spot of each stays
+//! in view, and the arrows change the second image.
+//!
 //! Opening grows the image out of its spot on the board, closing shrinks it back. The board
 //! itself doesn't change: study keys still act on the image (it's the selection while focused).
 
@@ -14,12 +18,17 @@ const STEP: Duration = Duration::from_millis(180);
 const MARGIN: f32 = 40.0;
 const FOOTER: f32 = 64.0;
 const MAX_ZOOM: f32 = 16.0;
+/// Space between the two images when comparing.
+const GAP: f32 = 24.0;
 
 pub(super) struct Focus {
     id: u64,
+    /// The second image, when comparing two.
+    other: Option<u64>,
     /// 1 = the whole image fits; more zooms into details.
     zoom: f32,
-    /// Screen offset of the image from its fitted place.
+    /// Offset of each image from its fitted place, as a fraction of its fitted size, so both
+    /// images of a comparison show the same spot.
     pan: Vec2,
     /// When it opened (or started closing), for the grow and shrink.
     opened: Instant,
@@ -65,6 +74,41 @@ fn fit_into(area: Rect, size: [f32; 2]) -> Rect {
     Rect::from_center_size(area.center(), vec2(w, h) * scale)
 }
 
+/// Where each image goes: one fills `area`, two split it side by side or one above the other,
+/// whichever shows the smaller of the two bigger.
+fn panes(area: Rect, sizes: &[[f32; 2]]) -> Vec<Rect> {
+    let [a, b] = match sizes {
+        [a, b] => [*a, *b],
+        _ => return vec![area],
+    };
+    let split = |across: bool| -> [Rect; 2] {
+        if across {
+            let w = (area.width() - GAP) / 2.0;
+            [
+                Rect::from_min_size(area.min, vec2(w, area.height())),
+                Rect::from_min_size(area.min + vec2(w + GAP, 0.0), vec2(w, area.height())),
+            ]
+        } else {
+            let h = (area.height() - GAP) / 2.0;
+            [
+                Rect::from_min_size(area.min, vec2(area.width(), h)),
+                Rect::from_min_size(area.min + vec2(0.0, h + GAP), vec2(area.width(), h)),
+            ]
+        }
+    };
+    let smaller = |[p, q]: [Rect; 2]| {
+        let fa = fit_into(p, a).area();
+        let fb = fit_into(q, b).area();
+        fa.min(fb)
+    };
+    let (across, stacked) = (split(true), split(false));
+    if smaller(stacked) > smaller(across) * 1.15 {
+        stacked.to_vec()
+    } else {
+        across.to_vec()
+    }
+}
+
 fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
     Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t))
 }
@@ -76,6 +120,14 @@ impl CoreBoardApp {
 
     /// Opens the selected image, or the one under the cursor, in focus view.
     pub(super) fn open_focus(&mut self, canvas: Rect, hover: Option<Pos2>) {
+        if let Some([a, b]) = self.compare_pair() {
+            self.open_focus_on(a);
+            if let Some(f) = &mut self.focus {
+                f.other = Some(b);
+            }
+            self.selection = HashSet::from([a, b]);
+            return;
+        }
         let image = |id: u64| self.board.items.iter().any(|i| i.id == id && i.is_image());
         let under = hover
             .and_then(|p| self.hit(canvas, p))
@@ -89,6 +141,18 @@ impl CoreBoardApp {
             return;
         };
         self.open_focus_on(id);
+    }
+
+    /// The two selected images, in reading order, when exactly two are selected.
+    pub(super) fn compare_pair(&self) -> Option<[u64; 2]> {
+        let picked: Vec<u64> = reading_order(&self.board.items)
+            .into_iter()
+            .filter(|id| self.selection.contains(id))
+            .collect();
+        match picked.as_slice() {
+            [a, b] => Some([*a, *b]),
+            _ => None,
+        }
     }
 
     /// Opens focus view on image `id` of this board.
@@ -105,6 +169,7 @@ impl CoreBoardApp {
         };
         self.focus = Some(Focus {
             id,
+            other: None,
             zoom: 1.0,
             pan: Vec2::ZERO,
             opened,
@@ -188,35 +253,78 @@ impl CoreBoardApp {
         }
     }
 
-    /// Steps to the next (or previous) image, wrapping around.
+    /// Steps to the next (or previous) image, wrapping around. When comparing, the second image
+    /// steps and the first stays.
     fn step_focus(&mut self, forward: bool) {
-        let order = reading_order(&self.board.items);
         let Some(focus) = &mut self.focus else {
             return;
         };
+        let order: Vec<u64> = reading_order(&self.board.items)
+            .into_iter()
+            .filter(|id| focus.other.is_none() || *id != focus.id)
+            .collect();
+        let current = focus.other.unwrap_or(focus.id);
         if order.len() < 2 {
             return;
         }
-        let at = order.iter().position(|id| *id == focus.id).unwrap_or(0);
+        let at = order.iter().position(|id| *id == current).unwrap_or(0);
         let next = if forward {
             (at + 1) % order.len()
         } else {
             (at + order.len() - 1) % order.len()
         };
-        focus.id = order[next];
+        match &mut focus.other {
+            Some(other) => *other = order[next],
+            None => focus.id = order[next],
+        }
         focus.zoom = 1.0;
         focus.pan = Vec2::ZERO;
         focus.switched = Instant::now();
-        self.selection = HashSet::from([order[next]]);
+        self.selection = std::iter::once(focus.id).chain(focus.other).collect();
     }
 
-    /// Where the image sits when fitted (zoom 1, no pan).
-    fn focus_fit_rect(canvas: Rect, item: &Item) -> Rect {
+    /// The images shown (one, or two when comparing), each with where it sits when fitted
+    /// (zoom 1, no pan) and the area it may use.
+    fn focus_layout(&self, canvas: Rect) -> Vec<(Item, Rect, Rect)> {
+        let Some(focus) = &self.focus else {
+            return Vec::new();
+        };
+        let items: Vec<Item> = std::iter::once(focus.id)
+            .chain(focus.other)
+            .filter_map(|id| self.board.items.iter().find(|i| i.id == id).cloned())
+            .collect();
+        if items.len() != 1 + focus.other.is_some() as usize {
+            // One was deleted (or undone away) while shown.
+            return Vec::new();
+        }
         let area = Rect::from_min_max(
             canvas.min + vec2(MARGIN, MARGIN),
             canvas.max - vec2(MARGIN, FOOTER),
         );
-        fit_into(area, item.size)
+        let sizes: Vec<[f32; 2]> = items.iter().map(|i| i.size).collect();
+        items
+            .into_iter()
+            .zip(panes(area, &sizes))
+            .map(|(item, pane)| {
+                let fit = fit_into(pane, item.size);
+                (item, fit, pane)
+            })
+            .collect()
+    }
+
+    /// Where an image fitted at `fit` is shown with the current zoom and pan.
+    fn focus_shown(fit: Rect, zoom: f32, pan: Vec2) -> Rect {
+        Rect::from_center_size(fit.center() + pan * fit.size(), fit.size() * zoom)
+    }
+
+    /// The original color under `pos` in focus view, for the color picker.
+    pub(super) fn focus_sample(&self, canvas: Rect, pos: Pos2) -> Option<[u8; 3]> {
+        let focus = self.focus.as_ref()?;
+        self.focus_layout(canvas)
+            .into_iter()
+            .map(|(item, fit, pane)| (item, Self::focus_shown(fit, focus.zoom, focus.pan), pane))
+            .find(|(_, shown, pane)| shown.contains(pos) && pane.contains(pos))
+            .and_then(|(item, shown, _)| self.sample_item(&item, shown, pos))
     }
 
     /// Keys, wheel and pointer while focus view is open. The board itself gets no input.
@@ -232,13 +340,16 @@ impl CoreBoardApp {
         if focus.closing {
             return;
         }
-        let Some(item) = self.board.items.iter().find(|i| i.id == focus.id).cloned() else {
-            // Deleted (or undone away) while focused.
+        let layout = self.focus_layout(canvas);
+        if layout.is_empty() {
             self.focus = None;
             return;
-        };
-        let fit = Self::focus_fit_rect(canvas, &item);
-        let shown = Rect::from_center_size(fit.center() + focus.pan, fit.size() * focus.zoom);
+        }
+        let (zoom, pan) = (focus.zoom, focus.pan);
+        let shown: Vec<Rect> = layout
+            .iter()
+            .map(|(_, fit, _)| Self::focus_shown(*fit, zoom, pan))
+            .collect();
 
         let (events, scroll, pinch, hover) = ctx.input(|i| {
             (
@@ -298,11 +409,30 @@ impl CoreBoardApp {
                         .into(),
                     );
                 }
+                Key::I if !m.command => {
+                    self.picker = !self.picker;
+                    self.toast(
+                        if self.picker {
+                            tr("Color picker on: hover an image, click to copy its color")
+                        } else {
+                            tr("Color picker off")
+                        }
+                        .into(),
+                    );
+                }
                 _ => {}
             }
         }
         if copy {
             self.copy_selection();
+        }
+        // With the color picker on, a click on a picture copies its color.
+        if self.picker
+            && response.clicked()
+            && let Some(at) = response.interact_pointer_pos()
+            && self.copy_picked_color(canvas, at)
+        {
+            return;
         }
         let Some(focus) = &mut self.focus else {
             return;
@@ -311,14 +441,20 @@ impl CoreBoardApp {
             return;
         }
 
+        // The image the pointer is over leads; when comparing, the other follows it.
+        let lead = hover
+            .and_then(|p| layout.iter().position(|(_, _, pane)| pane.contains(p)))
+            .unwrap_or(0);
+        let (fit, lead_shown) = (layout[lead].1, shown[lead]);
+
         // Wheel or pinch zooms into details, keeping the spot under the cursor in place.
         let factor = (scroll.y * 0.0025).exp() * pinch;
         if (factor - 1.0).abs() > f32::EPSILON {
             let zoom = (focus.zoom * factor).clamp(1.0, MAX_ZOOM);
             let f = zoom / focus.zoom;
-            let at = hover.unwrap_or(shown.center());
-            let center = at + (shown.center() - at) * f;
-            focus.pan += center - shown.center();
+            let at = hover.unwrap_or(lead_shown.center());
+            let center = at + (lead_shown.center() - at) * f;
+            focus.pan += (center - lead_shown.center()) / fit.size();
             focus.zoom = zoom;
             if zoom <= 1.0 {
                 focus.pan = Vec2::ZERO;
@@ -326,26 +462,29 @@ impl CoreBoardApp {
         }
         // Dragging pans (zoomed or not); a double-click resets.
         if response.dragged() {
-            focus.pan += response.drag_delta();
+            focus.pan += response.drag_delta() / fit.size();
         }
+        let on_image = |p: Pos2| {
+            layout
+                .iter()
+                .zip(&shown)
+                .any(|((_, _, pane), shown)| pane.contains(p) && shown.contains(p))
+        };
         if response.double_clicked() {
             focus.zoom = 1.0;
             focus.pan = Vec2::ZERO;
         } else if response.clicked()
             && response
                 .interact_pointer_pos()
-                .is_some_and(|p| !shown.contains(p))
+                .is_some_and(|p| !on_image(p))
         {
             // A click on the backdrop goes back to the board.
             self.close_focus();
         }
-        // Keep the middle of the screen on the image, so it can't be dragged away and lost.
+        // Keep the middle of each pane on its image, so it can't be dragged away and lost.
         if let Some(f) = &mut self.focus {
-            let half = fit.size() * f.zoom / 2.0;
-            f.pan = vec2(
-                f.pan.x.clamp(-half.x, half.x),
-                f.pan.y.clamp(-half.y, half.y),
-            );
+            let half = f.zoom / 2.0;
+            f.pan = vec2(f.pan.x.clamp(-half, half), f.pan.y.clamp(-half, half));
         }
         if self.focus.as_ref().is_some_and(|f| f.zoom > 1.0) {
             ctx.set_cursor_icon(egui::CursorIcon::Grab);
@@ -357,10 +496,11 @@ impl CoreBoardApp {
         let Some(focus) = &self.focus else {
             return;
         };
-        let Some(item) = self.board.items.iter().find(|i| i.id == focus.id).cloned() else {
+        let layout = self.focus_layout(canvas);
+        if layout.is_empty() {
             self.focus = None;
             return;
-        };
+        }
         let now = Instant::now();
         let t = (now.duration_since(focus.opened).as_secs_f32() / OPEN.as_secs_f32()).min(1.0);
         if focus.closing && t >= 1.0 {
@@ -375,12 +515,8 @@ impl CoreBoardApp {
         };
         let fade = (now.duration_since(focus.switched).as_secs_f32() / STEP.as_secs_f32()).min(1.0);
         let (zoom, pan, closing) = (focus.zoom, focus.pan, focus.closing);
+        let comparing = layout.len() > 1;
         let animating = t < 1.0 || fade < 1.0;
-
-        let fit = Self::focus_fit_rect(canvas, &item);
-        let target = Rect::from_center_size(fit.center() + pan, fit.size() * zoom);
-        let on_board = self.item_screen_rect(canvas, &item);
-        let rect = lerp_rect(on_board, target, open);
 
         let layer =
             egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("coreboard-focus"));
@@ -391,48 +527,63 @@ impl CoreBoardApp {
             Color32::from_black_alpha((238.0 * open) as u8),
         );
 
-        let filter = match self.board_values {
-            1 => Filter::Gray,
-            2 => Filter::Study(Analysis::Values3),
-            _ => Filter::for_item(&item),
-        };
-        let tint = Color32::WHITE.gamma_multiply(0.25 + 0.75 * fade);
-        match self.texture(ctx, &item.file, filter) {
-            Texture::Ready(tex) => {
-                // A soft shadow lifts it off the backdrop.
-                for (grow, alpha) in [(18.0, 40.0), (8.0, 60.0)] {
-                    painter.rect_filled(
-                        rect.translate(vec2(0.0, 8.0)).expand(grow * open),
-                        CornerRadius::same((grow * open) as u8),
-                        Color32::from_black_alpha((alpha * open) as u8),
+        for (index, (item, fit, pane)) in layout.iter().enumerate() {
+            let target = Self::focus_shown(*fit, zoom, pan);
+            let on_board = self.item_screen_rect(canvas, item);
+            let rect = lerp_rect(on_board, target, open);
+            // Zoomed in, each image stays inside its own half.
+            let clip = if comparing && open >= 1.0 {
+                pane.expand(GAP / 2.0 - 2.0).intersect(canvas)
+            } else {
+                canvas
+            };
+            let painter = painter.with_clip_rect(clip);
+            let filter = match self.board_values {
+                1 => Filter::Gray,
+                2 => Filter::Study(Analysis::Values3),
+                _ => Filter::for_item(item),
+            };
+            // Stepping fades in the image that changed (the second one, when comparing).
+            let fades = !comparing || index == 1;
+            let shade = if fades { 0.25 + 0.75 * fade } else { 1.0 };
+            let tint = Color32::WHITE.gamma_multiply(shade);
+            match self.texture(ctx, &item.file, filter) {
+                Texture::Ready(tex) => {
+                    // A soft shadow lifts it off the backdrop.
+                    for (grow, alpha) in [(18.0, 40.0), (8.0, 60.0)] {
+                        painter.rect_filled(
+                            rect.translate(vec2(0.0, 8.0)).expand(grow * open),
+                            CornerRadius::same((grow * open) as u8),
+                            Color32::from_black_alpha((alpha * open) as u8),
+                        );
+                    }
+                    painter.add(image_shape(tex.id(), rect, item, tint, 0.0));
+                }
+                Texture::Loading => {
+                    painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(50));
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                }
+                Texture::Failed(err) => {
+                    painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(70, 30, 30));
+                    painter.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        err,
+                        FontId::proportional(14.0),
+                        Color32::LIGHT_RED,
                     );
                 }
-                painter.add(image_shape(tex.id(), rect, &item, tint, 0.0));
             }
-            Texture::Loading => {
-                painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(50));
-                ctx.request_repaint_after(Duration::from_millis(50));
+            if item.guide != Guide::None {
+                draw_guide(&painter, rect, item.guide, item.guide_orientation);
             }
-            Texture::Failed(err) => {
-                painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(70, 30, 30));
-                painter.text(
-                    rect.center(),
-                    Align2::CENTER_CENTER,
-                    err,
-                    FontId::proportional(14.0),
-                    Color32::LIGHT_RED,
-                );
-            }
-        }
-        if item.guide != Guide::None {
-            draw_guide(&painter, rect, item.guide, item.guide_orientation);
-        }
-        if self.show_marks && !item.marks.is_empty() {
-            // Mark widths follow the image's on-screen scale.
-            let scale = rect.width() / item.size[0].max(1.0);
-            let clipped = painter.with_clip_rect(rect.intersect(canvas));
-            for mark in &item.marks {
-                clipped.extend(item_mark_shapes(rect, &item, mark, scale, 1.0));
+            if self.show_marks && !item.marks.is_empty() {
+                // Mark widths follow the image's on-screen scale.
+                let scale = rect.width() / item.size[0].max(1.0);
+                let clipped = painter.with_clip_rect(rect.intersect(clip));
+                for mark in &item.marks {
+                    clipped.extend(item_mark_shapes(rect, item, mark, scale, 1.0));
+                }
             }
         }
 
@@ -440,21 +591,50 @@ impl CoreBoardApp {
         if !closing && open > 0.5 {
             let alpha = ((open - 0.5) * 2.0).min(1.0);
             let order = reading_order(&self.board.items);
-            let index = order.iter().position(|id| *id == item.id).unwrap_or(0);
             let footer = canvas.max.y - FOOTER + 14.0;
             let mut y = footer;
-            if !item.caption.trim().is_empty() {
-                let galley = painter.layout(
-                    item.caption.clone(),
-                    FontId::proportional(17.0),
-                    Color32::from_gray(225).gamma_multiply(alpha),
-                    (canvas.width() - 2.0 * MARGIN).max(1.0),
-                );
-                let pos = pos2(canvas.center().x - galley.size().x / 2.0, y);
-                y += galley.size().y + 4.0;
-                painter.galley(pos, galley, Color32::from_gray(225));
+            let side_by_side = comparing && layout[0].2.min.y == layout[1].2.min.y;
+            if side_by_side {
+                // Each caption under its own image.
+                for (item, _, pane) in &layout {
+                    if item.caption.trim().is_empty() {
+                        continue;
+                    }
+                    let galley = painter.layout(
+                        item.caption.clone(),
+                        FontId::proportional(15.0),
+                        Color32::from_gray(225).gamma_multiply(alpha),
+                        pane.width().max(1.0),
+                    );
+                    let pos = pos2(pane.center().x - galley.size().x / 2.0, y);
+                    painter.galley(pos, galley, Color32::from_gray(225));
+                }
+                y += 22.0;
+            } else {
+                let captions: Vec<&str> = layout
+                    .iter()
+                    .map(|(item, _, _)| item.caption.trim())
+                    .filter(|c| !c.is_empty())
+                    .collect();
+                if !captions.is_empty() {
+                    let galley = painter.layout(
+                        captions.join("   |   "),
+                        FontId::proportional(17.0),
+                        Color32::from_gray(225).gamma_multiply(alpha),
+                        (canvas.width() - 2.0 * MARGIN).max(1.0),
+                    );
+                    let pos = pos2(canvas.center().x - galley.size().x / 2.0, y);
+                    y += galley.size().y + 4.0;
+                    painter.galley(pos, galley, Color32::from_gray(225));
+                }
             }
-            let mut info = trf("image {} of {}", &[&(index + 1), &order.len()]);
+            let shown_id = layout.last().map(|(item, _, _)| item.id).unwrap_or(0);
+            let index = order.iter().position(|id| *id == shown_id).unwrap_or(0);
+            let mut info = if comparing {
+                tr("comparing 2 images").to_string()
+            } else {
+                trf("image {} of {}", &[&(index + 1), &order.len()])
+            };
             if zoom > 1.01 {
                 info += &format!("  ·  {:.0}%", zoom * 100.0);
             }
@@ -468,11 +648,15 @@ impl CoreBoardApp {
             painter.text(
                 canvas.right_bottom() + vec2(-16.0, -12.0),
                 Align2::RIGHT_BOTTOM,
-                tr("← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back"),
+                if comparing {
+                    tr("← → change the second image   scroll zoom both   drag pan both   Esc back")
+                } else {
+                    tr("← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back")
+                },
                 FontId::proportional(12.0),
                 Color32::from_gray(110).gamma_multiply(alpha),
             );
-            if order.len() > 1 {
+            if order.len() > 1 + comparing as usize {
                 // Arrows at the sides, as a hint that there's more to step through.
                 for (x, arrow) in [(canvas.min.x + 18.0, "‹"), (canvas.max.x - 18.0, "›")] {
                     painter.text(
@@ -484,6 +668,14 @@ impl CoreBoardApp {
                     );
                 }
             }
+        }
+
+        // The color picker reads the image under the pointer here too.
+        if self.picker
+            && !closing
+            && let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+        {
+            self.paint_picker(&painter, canvas, pos);
         }
 
         // Messages from study keys show above the backdrop.
@@ -527,6 +719,21 @@ mod tests {
             image(4, 0.0, 0.0, 200.0, 220.0),
         ];
         assert_eq!(reading_order(&items), vec![4, 3, 1, 2]);
+    }
+
+    #[test]
+    fn compares_side_by_side_or_stacked() {
+        let wide_window = Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 800.0));
+        // Two portraits in a wide window: side by side.
+        let p = panes(wide_window, &[[300.0, 400.0], [300.0, 400.0]]);
+        assert_eq!(p[0].min.y, p[1].min.y);
+        assert!(p[0].max.x < p[1].min.x);
+        // Two panoramas: one above the other shows them bigger.
+        let p = panes(wide_window, &[[1000.0, 200.0], [1000.0, 200.0]]);
+        assert_eq!(p[0].min.x, p[1].min.x);
+        assert!(p[0].max.y < p[1].min.y);
+        // One image gets the whole area.
+        assert_eq!(panes(wide_window, &[[10.0, 10.0]]), vec![wide_window]);
     }
 
     #[test]
