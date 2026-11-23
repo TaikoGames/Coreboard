@@ -34,6 +34,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Google sign-in for cloud sync (repository secrets; without them the app says sync is off).
+  COREBOARD_GOOGLE_CLIENT_ID: ${{ secrets.COREBOARD_GOOGLE_CLIENT_ID }}
+  COREBOARD_GOOGLE_CLIENT_SECRET: ${{ secrets.COREBOARD_GOOGLE_CLIENT_SECRET }}
 
 jobs:
   # Decides what this run does: which commit and version, and whether to build and release.

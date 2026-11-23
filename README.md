@@ -133,6 +133,21 @@ Windows just double-click it. It opens as a new board next to your others, so th
 never changed and opening it twice gives two separate copies. Cards for files on your computer
 come along as cards, but the files they point to stay where they are.
 
+## Cloud sync (Google Drive)
+
+In the Boards window, **Connect Google Drive…** signs in through your browser. From then on every
+board on this computer is kept in a *Core Board* folder in your own Google Drive, and appears on
+every other computer where you connect the same account, pictures and all. It syncs on its own
+when you open Core Board, a minute after you change something, and every ten minutes; **Sync now**
+does it right away.
+
+- Core Board only asks for access to the files it creates in your Drive. It can't see anything
+  else there, and nothing goes through any Core Board server.
+- If a board was changed on two computers before they synced, nothing is lost: you keep yours,
+  and the other version appears as its own board, *Board name (other computer)*.
+- Deleting a board on one computer doesn't delete it in Drive or on your other computers.
+- **Disconnect** stops syncing on this computer; your boards stay both here and in Drive.
+
 ## Watch a folder
 
 Point a board at a folder (your Unity or game screenshots, a Blender render output, a downloads

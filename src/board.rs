@@ -775,7 +775,7 @@ pub fn image_ext(bytes: &[u8], path: Option<&Path>) -> Option<String> {
         .map(|ext| ext.to_string_lossy().to_lowercase())
 }
 
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for &b in bytes {
         hash ^= b as u64;

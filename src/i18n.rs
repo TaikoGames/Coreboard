@@ -667,6 +667,78 @@ const SPANISH: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
+    ("Cloud sync", "Sincronización en la nube"),
+    (
+        "Cloud sync isn't switched on in this version yet.",
+        "La sincronización en la nube aún no está activada en esta versión.",
+    ),
+    ("Connect Google Drive…", "Conectar Google Drive…"),
+    (
+        "Connected to Google Drive as {}",
+        "Conectado a Google Drive como {}",
+    ),
+    (
+        "Connected. You can close this tab and go back to Core Board.",
+        "Conectado. Puedes cerrar esta pestaña y volver a Core Board.",
+    ),
+    ("Connected: {}", "Conectado: {}"),
+    ("Couldn't sync: {}", "No se pudo sincronizar: {}"),
+    ("Disconnect", "Desconectar"),
+    (
+        "Finish signing in in your browser…",
+        "Termina de iniciar sesión en tu navegador…",
+    ),
+    (
+        "Google Drive asked to sign in again",
+        "Google Drive pide volver a iniciar sesión",
+    ),
+    (
+        "Google Drive refused (full, or too many requests; try later)",
+        "Google Drive lo rechazó (lleno o demasiadas peticiones; prueba más tarde)",
+    ),
+    (
+        "Google said no (signed out, or access was removed)",
+        "Google lo rechazó (sesión cerrada o acceso retirado)",
+    ),
+    (
+        "Not connected. You can close this tab and go back to Core Board.",
+        "No conectado. Puedes cerrar esta pestaña y volver a Core Board.",
+    ),
+    ("Sync now", "Sincronizar ahora"),
+    ("Synced {}", "Sincronizado {}"),
+    ("Syncing…", "Sincronizando…"),
+    (
+        "Updated with changes from your other computer",
+        "Actualizado con los cambios de tu otro ordenador",
+    ),
+    (
+        "a board in the cloud was made by a newer Core Board",
+        "un tablero de la nube se hizo con un Core Board más nuevo",
+    ),
+    (
+        "couldn't reach Google Drive (offline?)",
+        "no se pudo conectar con Google Drive (¿sin conexión?)",
+    ),
+    ("just now", "hace un momento"),
+    ("other computer", "otro ordenador"),
+    (
+        "sign-in took too long, try again",
+        "el inicio de sesión tardó demasiado, inténtalo de nuevo",
+    ),
+    ("sign-in was cancelled", "se canceló el inicio de sesión"),
+    ("{} min ago", "hace {} min"),
+    (
+        "A board changed on two computers at once: both versions are kept, see Boards",
+        "Un tablero cambió en dos ordenadores a la vez: se guardan las dos versiones, mira Tableros",
+    ),
+    (
+        "Your boards on every computer, through your own Google Drive. Core Board only sees the files it makes there.",
+        "Tus tableros en todos tus ordenadores, a través de tu propio Google Drive. Core Board solo ve los archivos que crea allí.",
+    ),
+    (
+        "Stops syncing on this computer. Your boards stay here and in Drive.",
+        "Deja de sincronizar en este ordenador. Tus tableros se quedan aquí y en Drive.",
+    ),
     ("Save board as a file", "Guardar el tablero como archivo"),
     ("Open a board file", "Abrir un archivo de tablero"),
     (
@@ -1311,6 +1383,78 @@ const CATALAN: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
+    ("Cloud sync", "Sincronització al núvol"),
+    (
+        "Cloud sync isn't switched on in this version yet.",
+        "La sincronització al núvol encara no està activada en aquesta versió.",
+    ),
+    ("Connect Google Drive…", "Connectar Google Drive…"),
+    (
+        "Connected to Google Drive as {}",
+        "Connectat a Google Drive com a {}",
+    ),
+    (
+        "Connected. You can close this tab and go back to Core Board.",
+        "Connectat. Pots tancar aquesta pestanya i tornar a Core Board.",
+    ),
+    ("Connected: {}", "Connectat: {}"),
+    ("Couldn't sync: {}", "No s'ha pogut sincronitzar: {}"),
+    ("Disconnect", "Desconnectar"),
+    (
+        "Finish signing in in your browser…",
+        "Acaba d'iniciar la sessió al navegador…",
+    ),
+    (
+        "Google Drive asked to sign in again",
+        "Google Drive demana tornar a iniciar la sessió",
+    ),
+    (
+        "Google Drive refused (full, or too many requests; try later)",
+        "Google Drive ho ha rebutjat (ple o massa peticions; prova-ho més tard)",
+    ),
+    (
+        "Google said no (signed out, or access was removed)",
+        "Google ho ha rebutjat (sessió tancada o accés retirat)",
+    ),
+    (
+        "Not connected. You can close this tab and go back to Core Board.",
+        "No connectat. Pots tancar aquesta pestanya i tornar a Core Board.",
+    ),
+    ("Sync now", "Sincronitzar ara"),
+    ("Synced {}", "Sincronitzat {}"),
+    ("Syncing…", "Sincronitzant…"),
+    (
+        "Updated with changes from your other computer",
+        "Actualitzat amb els canvis del teu altre ordinador",
+    ),
+    (
+        "a board in the cloud was made by a newer Core Board",
+        "un tauler del núvol s'ha fet amb un Core Board més nou",
+    ),
+    (
+        "couldn't reach Google Drive (offline?)",
+        "no s'ha pogut connectar amb Google Drive (sense connexió?)",
+    ),
+    ("just now", "fa un moment"),
+    ("other computer", "altre ordinador"),
+    (
+        "sign-in took too long, try again",
+        "l'inici de sessió ha trigat massa, torna-ho a provar",
+    ),
+    ("sign-in was cancelled", "s'ha cancel·lat l'inici de sessió"),
+    ("{} min ago", "fa {} min"),
+    (
+        "A board changed on two computers at once: both versions are kept, see Boards",
+        "Un tauler ha canviat en dos ordinadors alhora: es guarden les dues versions, mira Taulers",
+    ),
+    (
+        "Your boards on every computer, through your own Google Drive. Core Board only sees the files it makes there.",
+        "Els teus taulers a tots els ordinadors, a través del teu propi Google Drive. Core Board només veu els fitxers que hi crea.",
+    ),
+    (
+        "Stops syncing on this computer. Your boards stay here and in Drive.",
+        "Deixa de sincronitzar en aquest ordinador. Els teus taulers es queden aquí i a Drive.",
+    ),
     ("Save board as a file", "Desar el tauler com a fitxer"),
     ("Open a board file", "Obrir un fitxer de tauler"),
     (
@@ -1416,6 +1560,10 @@ mod tests {
             include_str!("app/loupe.rs"),
             include_str!("app/boardfiles.rs"),
             include_str!("boardfile.rs"),
+            include_str!("app/cloud.rs"),
+            include_str!("cloud/sync.rs"),
+            include_str!("cloud/auth.rs"),
+            include_str!("cloud/drive.rs"),
         ];
         let mut missing = Vec::new();
         for source in sources {

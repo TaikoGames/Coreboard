@@ -88,6 +88,24 @@ pub fn remember(dir: &Path) {
     }
 }
 
+/// Adds `dir` to the end of the recent list (a board that arrived from the cloud), unless it's
+/// there already.
+pub fn add_recent(dir: &Path) {
+    let Some(file) = recent_file() else { return };
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let mut boards = recent();
+    if boards.contains(&dir) {
+        return;
+    }
+    boards.push(dir);
+    if let Some(parent) = file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(&Recent { boards }) {
+        let _ = fs::write(file, json);
+    }
+}
+
 /// Where boards created by name live: next to the default board.
 pub fn boards_root() -> PathBuf {
     crate::board::default_board_dir()
@@ -96,12 +114,13 @@ pub fn boards_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// A folder name for a board called `name`: keeps letters, digits, spaces, `-` and `_`.
+/// A folder name for a board called `name`: keeps letters, digits, spaces, `-`, `_` and
+/// brackets.
 pub fn folder_name(name: &str) -> Option<String> {
     let cleaned: String = name
         .trim()
         .chars()
-        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '(' | ')'))
         .collect();
     let cleaned = cleaned.trim().to_string();
     (!cleaned.is_empty()).then_some(cleaned)

@@ -20,6 +20,7 @@ use crate::library::{self, Tone};
 
 mod boardfiles;
 mod cards;
+mod cloud;
 mod context;
 mod copy;
 mod draw;
@@ -314,6 +315,9 @@ pub struct CoreBoardApp {
     watch_path_input: String,
     recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
+    /// Counts changes to the board, so cloud sync can tell whether it changed meanwhile.
+    edits: u64,
+    cloud: cloud::CloudSync,
 }
 
 impl CoreBoardApp {
@@ -407,6 +411,8 @@ impl CoreBoardApp {
             watch_path_input: String::new(),
             recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
+            edits: 0,
+            cloud: cloud::CloudSync::new(),
         }
     }
 
@@ -478,6 +484,7 @@ impl CoreBoardApp {
     // ---------------------------------------------------------------- edits
 
     fn touch(&mut self) {
+        self.edits += 1;
         self.dirty_since.get_or_insert_with(Instant::now);
     }
 
@@ -2239,6 +2246,8 @@ impl CoreBoardApp {
                 ui.separator();
                 self.watch_controls(ui);
                 ui.separator();
+                self.cloud_controls(ui);
+                ui.separator();
                 let animations = ui
                     .checkbox(&mut self.animations, tr("Animations"))
                     .on_hover_text(tr(
@@ -2312,6 +2321,7 @@ impl CoreBoardApp {
         self.show_help = self.board.items.is_empty() && self.store.unreadable.is_none();
         self.window_level_sent = false;
         self.new_board_name.clear();
+        self.cloud.want();
         boards::remember(&self.store.dir);
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "Core Board {} — {}",
@@ -3448,6 +3458,7 @@ impl eframe::App for CoreBoardApp {
         self.request_previews();
         self.receive_previews();
         self.receive_updates(&ctx);
+        self.cloud_tick(&ctx);
         self.receive_exports();
         self.receive_palettes();
         self.poll_watch(&ctx);

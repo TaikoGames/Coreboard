@@ -5,6 +5,7 @@ mod app;
 mod board;
 mod boardfile;
 mod boards;
+mod cloud;
 mod export;
 mod filters;
 mod i18n;
