@@ -251,6 +251,10 @@ impl CoreBoardApp {
             self.open_boards_window();
             return true;
         }
+        if entry(ui, tr("Save this board as a file…"), "Ctrl+Shift+S") {
+            self.save_board_file();
+            return true;
+        }
         if !self.board.items.is_empty() && entry(ui, tr("Export PNG…"), "Ctrl+E") {
             self.show_export = true;
             return true;

@@ -3,6 +3,7 @@
 
 mod app;
 mod board;
+mod boardfile;
 mod boards;
 mod export;
 mod filters;
@@ -25,10 +26,19 @@ fn main() -> eframe::Result {
     }
     update::remove_old_copies();
     i18n::apply(&boards::settings().language);
-    // A folder given on the command line, else the board used last, else the default one.
+    // A folder given on the command line, else the board used last, else the default one. A
+    // board file (double-clicked, or given on the command line) opens as a new board.
     let dir = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
+        .and_then(|arg| {
+            if !boardfile::is_board_file(&arg) {
+                return Some(arg);
+            }
+            boardfile::open(&arg, &boards::boards_root())
+                .inspect_err(|err| eprintln!("coreboard: {}: {err}", arg.display()))
+                .ok()
+        })
         .or_else(|| boards::recent().into_iter().next())
         .unwrap_or_else(board::default_board_dir);
 

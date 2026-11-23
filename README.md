@@ -71,6 +71,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Caption | **Double-click** an image to write a caption under it |
 | Surprise me | **S** opens a random image from this board or any recent one in focus view |
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
+| Board file | **Ctrl+Shift+S** saves the whole board as one `.coreboard` file; drag one in to open it |
 | Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
@@ -120,6 +121,17 @@ Supported formats: PNG, JPEG, GIF (first frame), WebP, BMP.
   their left, center, right, top, middle or bottom edges, or spaces them evenly across or down
   (3+ items, keeping the outer ones in place). Shortcuts: **Alt+←/→/↑/↓**, **Alt+C** (center),
   **Alt+M** (middle), **Alt+H** / **Alt+V** (space evenly).
+
+## Board files
+
+**Ctrl+Shift+S** (or *Save this board as a file…* in the Boards window, or right-click the board)
+saves the whole board, its layout and every picture in it, as one `.coreboard` file. Send it to
+a friend, keep it as a backup, or carry it to another computer.
+
+To open one, drag it onto Core Board, use *Open a board file…* in the Boards window, or on
+Windows just double-click it. It opens as a new board next to your others, so the file itself is
+never changed and opening it twice gives two separate copies. Cards for files on your computer
+come along as cards, but the files they point to stay where they are.
 
 ## Watch a folder
 

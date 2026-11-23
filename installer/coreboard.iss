@@ -32,6 +32,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; A running Core Board is renamed out of the way instead (see [Code]), so updates never wait on it.
 CloseApplications=no
+; Double-clicking a .coreboard board file opens it in Core Board.
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Put a Core Board shortcut on the desktop"
@@ -42,6 +44,12 @@ Source: "..\target\release\coreboard.exe"; DestDir: "{app}"; Flags: ignoreversio
 [Icons]
 Name: "{autoprograms}\Core Board"; Filename: "{app}\coreboard.exe"
 Name: "{autodesktop}\Core Board"; Filename: "{app}\coreboard.exe"; Tasks: desktopicon
+
+[Registry]
+Root: HKA; Subkey: "Software\Classes\.coreboard"; ValueType: string; ValueName: ""; ValueData: "CoreBoard.Board"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\CoreBoard.Board"; ValueType: string; ValueName: ""; ValueData: "Core Board board"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\CoreBoard.Board\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\coreboard.exe,0"
+Root: HKA; Subkey: "Software\Classes\CoreBoard.Board\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\coreboard.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\coreboard.exe"; Description: "Open Core Board"; Flags: nowait postinstall skipifsilent

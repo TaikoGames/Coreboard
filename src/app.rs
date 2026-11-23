@@ -18,6 +18,7 @@ use crate::filters::{self, Filter};
 use crate::i18n::{tr, trf};
 use crate::library::{self, Tone};
 
+mod boardfiles;
 mod cards;
 mod context;
 mod copy;
@@ -2160,6 +2161,7 @@ impl CoreBoardApp {
             return;
         }
         let mut open: Option<std::path::PathBuf> = None;
+        let (mut save_file, mut open_file) = (false, false);
         let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
         let current = self
             .store
@@ -2195,6 +2197,21 @@ impl CoreBoardApp {
                         && let Some(name) = name
                     {
                         open = Some(boards::boards_root().join(name));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(tr("Save this board as a file…"))
+                        .on_hover_text(tr(
+                            "One file with the whole board and its pictures, to send to \
+                             someone or keep as a backup",
+                        ))
+                        .clicked()
+                    {
+                        save_file = true;
+                    }
+                    if ui.button(tr("Open a board file…")).clicked() {
+                        open_file = true;
                     }
                 });
                 if ui.button(tr("Open or create in a folder…")).clicked()
@@ -2247,6 +2264,13 @@ impl CoreBoardApp {
             });
         if let Some(dir) = open {
             self.switch_board(ctx, dir);
+            close = true;
+        }
+        if save_file {
+            self.save_board_file();
+        }
+        if open_file {
+            self.pick_board_file(ctx);
             close = true;
         }
         if close {
@@ -2330,9 +2354,13 @@ impl CoreBoardApp {
             // read to tell, so dropping a big video doesn't load it all.
             let mut sources = Vec::new();
             let mut others = Vec::new();
+            let mut board_file = None;
             for file in &dropped {
                 let path = file.path();
-                if looks_like_picture(path) {
+                if crate::boardfile::is_board_file(path) {
+                    // A whole board: opened once the rest is placed.
+                    board_file = Some(path.to_path_buf());
+                } else if looks_like_picture(path) {
                     match file.bytes() {
                         Ok(bytes) => sources.push((bytes, Some(path))),
                         Err(err) => eprintln!("coreboard: {}: {err}", path.display()),
@@ -2352,6 +2380,9 @@ impl CoreBoardApp {
                 let at = anchor + vec2(0.0, 40.0);
                 self.join_cards = added > 0;
                 self.add_file_cards(canvas, at, others);
+            }
+            if let Some(file) = board_file {
+                self.open_board_file(&ctx, &file);
             }
         }
 
@@ -2425,6 +2456,7 @@ impl CoreBoardApp {
                     Key::Y if m.command => self.redo(),
                     Key::E if m.command => self.show_export = !self.board.items.is_empty(),
                     Key::O if m.command => self.open_boards_window(),
+                    Key::S if m.command && m.shift => self.save_board_file(),
                     Key::S if m.command => {
                         self.save_now();
                         self.toast(tr("Saved").into());
@@ -3890,6 +3922,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
         "Boards & window",
         &[
             ("Ctrl+O", "boards, updates, settings"),
+            ("Ctrl+Shift+S", "save the board as one file"),
             ("Ctrl+T / Ctrl+F", "tags / search"),
             ("Ctrl+E", "export PNG (+ watermark)"),
             ("[ / ]", "window opacity"),

@@ -667,6 +667,42 @@ const SPANISH: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
+    ("Save board as a file", "Guardar el tablero como archivo"),
+    ("Open a board file", "Abrir un archivo de tablero"),
+    (
+        "Save this board as a file…",
+        "Guardar este tablero como archivo…",
+    ),
+    ("Open a board file…", "Abrir un archivo de tablero…"),
+    (
+        "One file with the whole board and its pictures, to send to someone or keep as a backup",
+        "Un solo archivo con todo el tablero y sus imágenes, para enviarlo a alguien o guardarlo como copia",
+    ),
+    (
+        "Saved \u{201c}{}\u{201d} with {} pictures",
+        "Guardado «{}» con {} imágenes",
+    ),
+    (
+        "Couldn't save the board file: {}",
+        "No se pudo guardar el archivo de tablero: {}",
+    ),
+    (
+        "Couldn't open that board file: {}",
+        "No se pudo abrir ese archivo de tablero: {}",
+    ),
+    (
+        "save the board as one file",
+        "guardar el tablero en un solo archivo",
+    ),
+    (
+        "this isn't a Core Board file",
+        "no es un archivo de Core Board",
+    ),
+    (
+        "it was made by a newer Core Board, or is damaged ({})",
+        "se hizo con un Core Board más nuevo o está dañado ({})",
+    ),
+    ("it's too big", "es demasiado grande"),
     ("2 images + Enter", "2 imágenes + Enter"),
     ("compare them side by side", "compararlas lado a lado"),
     ("comparing 2 images", "comparando 2 imágenes"),
@@ -1275,6 +1311,42 @@ const CATALAN: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
+    ("Save board as a file", "Desar el tauler com a fitxer"),
+    ("Open a board file", "Obrir un fitxer de tauler"),
+    (
+        "Save this board as a file…",
+        "Desar aquest tauler com a fitxer…",
+    ),
+    ("Open a board file…", "Obrir un fitxer de tauler…"),
+    (
+        "One file with the whole board and its pictures, to send to someone or keep as a backup",
+        "Un sol fitxer amb tot el tauler i les seves imatges, per enviar-lo a algú o guardar-lo com a còpia",
+    ),
+    (
+        "Saved \u{201c}{}\u{201d} with {} pictures",
+        "Desat «{}» amb {} imatges",
+    ),
+    (
+        "Couldn't save the board file: {}",
+        "No s'ha pogut desar el fitxer de tauler: {}",
+    ),
+    (
+        "Couldn't open that board file: {}",
+        "No s'ha pogut obrir aquest fitxer de tauler: {}",
+    ),
+    (
+        "save the board as one file",
+        "desar el tauler en un sol fitxer",
+    ),
+    (
+        "this isn't a Core Board file",
+        "no és un fitxer de Core Board",
+    ),
+    (
+        "it was made by a newer Core Board, or is damaged ({})",
+        "s'ha fet amb un Core Board més nou o està malmès ({})",
+    ),
+    ("it's too big", "és massa gran"),
     ("2 images + Enter", "2 imatges + Enter"),
     (
         "compare them side by side",
@@ -1342,6 +1414,8 @@ mod tests {
             include_str!("app/groups.rs"),
             include_str!("app/context.rs"),
             include_str!("app/loupe.rs"),
+            include_str!("app/boardfiles.rs"),
+            include_str!("boardfile.rs"),
         ];
         let mut missing = Vec::new();
         for source in sources {
