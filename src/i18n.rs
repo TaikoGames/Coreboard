@@ -667,6 +667,47 @@ const SPANISH: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
+    ("Earlier versions", "Versiones anteriores"),
+    ("As it was on {}", "Como estaba el {}"),
+    ("Restore", "Restaurar"),
+    (
+        "Puts the board back the way it was at the end of that day. Ctrl+Z undoes it.",
+        "Deja el tablero como estaba al final de ese día. Ctrl+Z lo deshace.",
+    ),
+    (
+        "Back to how it was on {}. Ctrl+Z undoes it.",
+        "Vuelve a estar como el {}. Ctrl+Z lo deshace.",
+    ),
+    ("That backup couldn't be read", "No se pudo leer esa copia"),
+    ("{} s", "{} s"),
+    ("{} min", "{} min"),
+    (
+        "Add some images first, then start gesture practice",
+        "Añade algunas imágenes y luego empieza la práctica de gestos",
+    ),
+    (
+        "Gesture practice: G changes the time, Space pauses",
+        "Práctica de gestos: G cambia el tiempo, Espacio pausa",
+    ),
+    (
+        "Gesture practice: {} per picture",
+        "Práctica de gestos: {} por imagen",
+    ),
+    ("Gesture practice off", "Práctica de gestos desactivada"),
+    (
+        "gesture practice · picture {} · {} each",
+        "práctica de gestos · imagen {} · {} cada una",
+    ),
+    (
+        "Space pause   → skip   G change time   Esc stop",
+        "Espacio pausa   → saltar   G cambiar tiempo   Esc parar",
+    ),
+    ("paused", "en pausa"),
+    ("Gesture practice", "Práctica de gestos"),
+    (
+        "gesture practice: timed drawing",
+        "práctica de gestos: dibujo cronometrado",
+    ),
     ("Save board as a file", "Guardar el tablero como archivo"),
     ("Open a board file", "Abrir un archivo de tablero"),
     (
@@ -1311,6 +1352,50 @@ const CATALAN: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
+    ("Earlier versions", "Versions anteriors"),
+    ("As it was on {}", "Com estava el {}"),
+    ("Restore", "Restaurar"),
+    (
+        "Puts the board back the way it was at the end of that day. Ctrl+Z undoes it.",
+        "Deixa el tauler com estava al final d'aquell dia. Ctrl+Z ho desfà.",
+    ),
+    (
+        "Back to how it was on {}. Ctrl+Z undoes it.",
+        "Torna a estar com el {}. Ctrl+Z ho desfà.",
+    ),
+    (
+        "That backup couldn't be read",
+        "No s'ha pogut llegir aquesta còpia",
+    ),
+    ("{} s", "{} s"),
+    ("{} min", "{} min"),
+    (
+        "Add some images first, then start gesture practice",
+        "Afegeix algunes imatges i després comença la pràctica de gestos",
+    ),
+    (
+        "Gesture practice: G changes the time, Space pauses",
+        "Pràctica de gestos: G canvia el temps, Espai pausa",
+    ),
+    (
+        "Gesture practice: {} per picture",
+        "Pràctica de gestos: {} per imatge",
+    ),
+    ("Gesture practice off", "Pràctica de gestos desactivada"),
+    (
+        "gesture practice · picture {} · {} each",
+        "pràctica de gestos · imatge {} · {} cadascuna",
+    ),
+    (
+        "Space pause   → skip   G change time   Esc stop",
+        "Espai pausa   → saltar   G canviar temps   Esc aturar",
+    ),
+    ("paused", "en pausa"),
+    ("Gesture practice", "Pràctica de gestos"),
+    (
+        "gesture practice: timed drawing",
+        "pràctica de gestos: dibuix cronometrat",
+    ),
     ("Save board as a file", "Desar el tauler com a fitxer"),
     ("Open a board file", "Obrir un fitxer de tauler"),
     (

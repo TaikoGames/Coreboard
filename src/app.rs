@@ -314,6 +314,10 @@ pub struct CoreBoardApp {
     watch_path_input: String,
     recent: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
+    /// Days this board has a backup for (listed when the Boards window opens), and the one
+    /// picked to restore.
+    backups: Vec<String>,
+    restore_day: Option<String>,
 }
 
 impl CoreBoardApp {
@@ -407,6 +411,8 @@ impl CoreBoardApp {
             watch_path_input: String::new(),
             recent: Vec::new(),
             clipboard: arboard::Clipboard::new().ok(),
+            backups: Vec::new(),
+            restore_day: None,
         }
     }
 
@@ -2153,6 +2159,8 @@ impl CoreBoardApp {
     fn open_boards_window(&mut self) {
         self.finish_edit();
         self.recent = boards::recent();
+        self.backups = self.store.backups();
+        self.restore_day = self.backups.first().cloned();
         self.show_boards = true;
     }
 
@@ -2237,6 +2245,7 @@ impl CoreBoardApp {
                     }
                 }
                 ui.separator();
+                self.backup_controls(ui);
                 self.watch_controls(ui);
                 ui.separator();
                 let animations = ui
@@ -2275,6 +2284,48 @@ impl CoreBoardApp {
         }
         if close {
             self.show_boards = false;
+        }
+    }
+
+    /// "Earlier versions": puts the board back the way it was on a past day (undoable).
+    fn backup_controls(&mut self, ui: &mut egui::Ui) {
+        if self.backups.is_empty() {
+            return;
+        }
+        ui.label(tr("Earlier versions"));
+        let mut restore = false;
+        ui.horizontal(|ui| {
+            let shown = self.restore_day.clone().unwrap_or_default();
+            egui::ComboBox::from_id_salt("restore-day")
+                .selected_text(trf("As it was on {}", &[&shown]))
+                .show_ui(ui, |ui| {
+                    for day in &self.backups {
+                        ui.selectable_value(&mut self.restore_day, Some(day.clone()), day);
+                    }
+                });
+            restore = ui
+                .button(tr("Restore"))
+                .on_hover_text(tr(
+                    "Puts the board back the way it was at the end of that day. Ctrl+Z undoes it.",
+                ))
+                .clicked();
+        });
+        ui.separator();
+        if restore && let Some(day) = self.restore_day.clone() {
+            match self.store.load_backup(&day) {
+                Some(mut old) => {
+                    self.checkpoint();
+                    old.view = self.board.view.clone();
+                    old.next_id = old.next_id.max(self.board.next_id);
+                    self.board = old;
+                    self.selection.clear();
+                    self.touch();
+                    self.save_now();
+                    self.show_boards = false;
+                    self.toast(trf("Back to how it was on {}. Ctrl+Z undoes it.", &[&day]));
+                }
+                None => self.toast(tr("That backup couldn't be read").into()),
+            }
         }
     }
 
@@ -2479,6 +2530,7 @@ impl CoreBoardApp {
                     Key::X if !m.command => self.toggle_crop_mode(),
                     Key::Enter if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::S if !m.command && !m.shift => self.surprise(&ctx),
+                    Key::S if !m.command && m.shift => self.start_practice(),
                     Key::Enter if !m.command && self.editing.is_none() => {
                         self.open_focus(canvas, hover);
                     }
@@ -3894,6 +3946,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Enter", "focus view, ← → to step through"),
             ("2 images + Enter", "compare them side by side"),
             ("S", "surprise me: a random image"),
+            ("Shift+S", "gesture practice: timed drawing"),
         ],
     ),
     (

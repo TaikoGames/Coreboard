@@ -724,6 +724,8 @@ impl Store {
             return Ok(());
         }
         let json = serde_json::to_vec_pretty(board).map_err(io::Error::other)?;
+        // A backup can't be made? Saving still goes ahead.
+        let _ = self.back_up(today());
         let tmp = self.dir.join("board.json.tmp");
         fs::write(&tmp, json)?;
         fs::rename(tmp, self.dir.join("board.json"))
@@ -739,7 +741,7 @@ impl Store {
         Ok(file)
     }
 
-    /// Deletes image files no item refers to anymore.
+    /// Deletes image files no item refers to anymore, on the board or in any of its backups.
     pub fn collect_garbage(&self, board: &Board) {
         // An unreadable board's items aren't known: every image would look unused.
         if self.unreadable.is_some() {
@@ -748,13 +750,101 @@ impl Store {
         let Ok(entries) = fs::read_dir(self.dir.join("images")) else {
             return;
         };
+        let mut used: std::collections::HashSet<String> =
+            board.items.iter().map(|i| i.file.clone()).collect();
+        for day in self.backups() {
+            match self.load_backup(&day) {
+                Some(old) => used.extend(old.items.into_iter().map(|i| i.file)),
+                // A backup that can't be read might still need its pictures: keep them all.
+                None => return,
+            }
+        }
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !board.items.iter().any(|item| item.file == name) {
+            if !used.contains(&name) {
                 let _ = fs::remove_file(entry.path());
             }
         }
     }
+
+    fn backup_dir(&self) -> PathBuf {
+        self.dir.join("backups")
+    }
+
+    /// Before the first save of a day, keeps the board as it was last saved on an earlier day,
+    /// named after that day. The newest `KEEP_BACKUPS` days are kept.
+    fn back_up(&self, today: u64) -> io::Result<()> {
+        let current = self.dir.join("board.json");
+        let Ok(modified) = fs::metadata(&current).and_then(|m| m.modified()) else {
+            return Ok(());
+        };
+        let day = days_since_epoch(modified);
+        if day >= today {
+            return Ok(());
+        }
+        let dir = self.backup_dir();
+        let path = dir.join(format!("{}.json", date_text(day)));
+        if path.exists() {
+            return Ok(());
+        }
+        fs::create_dir_all(&dir)?;
+        fs::copy(&current, &path)?;
+        for old in self.backups().into_iter().skip(KEEP_BACKUPS) {
+            let _ = fs::remove_file(dir.join(format!("{old}.json")));
+        }
+        Ok(())
+    }
+
+    /// Days with a backup ("2026-11-23"), newest first.
+    pub fn backups(&self) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(self.backup_dir()) else {
+            return Vec::new();
+        };
+        let mut days: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let day = name.strip_suffix(".json")?;
+                (day.len() == 10 && day.chars().all(|c| c.is_ascii_digit() || c == '-'))
+                    .then(|| day.to_string())
+            })
+            .collect();
+        days.sort_unstable_by(|a, b| b.cmp(a));
+        days
+    }
+
+    /// The board as it was on `day`.
+    pub fn load_backup(&self, day: &str) -> Option<Board> {
+        let bytes = fs::read(self.backup_dir().join(format!("{day}.json"))).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+}
+
+/// How many days of backups each board keeps.
+pub const KEEP_BACKUPS: usize = 7;
+
+fn days_since_epoch(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0)
+}
+
+fn today() -> u64 {
+    days_since_epoch(std::time::SystemTime::now())
+}
+
+/// "2026-11-23" for a day counted from 1970-01-01 (Howard Hinnant's civil-from-days).
+pub fn date_text(day: u64) -> String {
+    let z = day as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 pub fn default_board_dir() -> PathBuf {
@@ -782,6 +872,75 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn writes_dates() {
+        assert_eq!(date_text(0), "1970-01-01");
+        assert_eq!(date_text(20_415), "2025-11-23");
+        assert_eq!(date_text(19_782), "2024-02-29");
+    }
+
+    #[test]
+    fn keeps_one_backup_a_day_and_their_pictures() {
+        let dir = std::env::temp_dir().join(format!("coreboard-backups-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::open(dir.clone()).unwrap();
+        let picture = |id: u64, file: &str| Item {
+            id,
+            file: file.into(),
+            ..Item::default()
+        };
+        fs::write(store.image_path("old.png"), b"old").unwrap();
+        fs::write(store.image_path("new.png"), b"new").unwrap();
+        let old = Board {
+            items: vec![picture(1, "old.png")],
+            ..Board::default()
+        };
+        store.save(&old).unwrap();
+        // Saved today: no backup yet.
+        assert!(store.backups().is_empty());
+        // The next day's first save keeps today's version first.
+        let tomorrow = today() + 1;
+        store.back_up(tomorrow).unwrap();
+        store.back_up(tomorrow).unwrap();
+        assert_eq!(store.backups(), vec![date_text(today())]);
+        let new = Board {
+            items: vec![picture(1, "new.png")],
+            ..Board::default()
+        };
+        store.save(&new).unwrap();
+        // The old picture is only in the backup, and survives clean-up.
+        store.collect_garbage(&new);
+        assert!(store.image_path("old.png").exists());
+        let restored = store.load_backup(&date_text(today())).unwrap();
+        assert_eq!(restored.items[0].file, "old.png");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keeps_only_the_newest_days() {
+        let dir = std::env::temp_dir().join(format!("coreboard-backups7-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::open(dir.clone()).unwrap();
+        store.save(&Board::default()).unwrap();
+        fs::create_dir_all(store.backup_dir()).unwrap();
+        for day in 1..=10u64 {
+            let path = store.backup_dir().join(format!("{}.json", date_text(day)));
+            fs::write(path, b"{}").unwrap();
+        }
+        store.back_up(today() + 1).unwrap();
+        let kept = store.backups();
+        assert_eq!(kept.len(), KEEP_BACKUPS);
+        assert_eq!(kept[0], date_text(today()));
+        assert_eq!(kept[1], date_text(10));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

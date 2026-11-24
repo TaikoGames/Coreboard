@@ -72,6 +72,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Surprise me | **S** opens a random image from this board or any recent one in focus view |
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
 | Board file | **Ctrl+Shift+S** saves the whole board as one `.coreboard` file; drag one in to open it |
+| Gesture practice | **Shift+S**: pictures one at a time on a timer; **G** time, **Space** pause |
 | Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
@@ -334,6 +335,23 @@ side*). They open next to each other, or one above the other when that shows the
 Scrolling and dragging zoom and pan both together, so the same spot of each stays in view: handy
 for comparing two poses, two lighting setups, or your drawing against its reference. **← →** swap
 the second picture for the others on the board.
+
+## Gesture practice
+
+**Shift+S** (or right-click the board → *Gesture practice*) starts a timed drawing session: your
+board's pictures appear one at a time in focus view, in random order, a new one every minute. A
+ring in the corner shows the time left and turns orange for the last five seconds.
+
+- **G** changes the time per picture: 30 s, 1, 2, 5 or 10 minutes, then off.
+- **Space** pauses and resumes, **→** skips to the next picture, **Esc** ends the session.
+- In plain focus view, **G** starts the timer on the picture you're looking at.
+
+## Daily backups
+
+Core Board keeps a copy of each board as it was at the end of every day you changed it, for the
+last seven days. In the Boards window, *Earlier versions* lists them: pick a day and **Restore**
+puts the board back the way it was then. **Ctrl+Z** undoes a restore, and the pictures of every
+kept day stay safe until that day's copy is gone.
 
 ## Captions, duplicates and whole-board values
 

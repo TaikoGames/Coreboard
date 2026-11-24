@@ -35,6 +35,59 @@ pub(super) struct Focus {
     closing: bool,
     /// When the shown image last changed, for the fade-in.
     switched: Instant,
+    /// Gesture practice: a new picture every few seconds.
+    practice: Option<Practice>,
+}
+
+/// Gesture practice: a timed drawing session through the board's pictures, in random order.
+struct Practice {
+    /// Seconds per picture.
+    secs: u32,
+    /// When the current picture's time started (moved forward by pauses).
+    since: Instant,
+    /// When it was paused, while it is.
+    paused: Option<Instant>,
+    /// Which picture of the session this is (1 = the first).
+    count: u32,
+}
+
+/// The times G steps through, in seconds.
+const PRACTICE_TIMES: [u32; 5] = [30, 60, 120, 300, 600];
+
+impl Practice {
+    fn new(secs: u32) -> Self {
+        Self {
+            secs,
+            since: Instant::now(),
+            paused: None,
+            count: 1,
+        }
+    }
+
+    /// Seconds used of this picture's time.
+    fn used(&self) -> f32 {
+        let until = self.paused.unwrap_or_else(Instant::now);
+        until.saturating_duration_since(self.since).as_secs_f32()
+    }
+
+    fn left(&self) -> f32 {
+        (self.secs as f32 - self.used()).max(0.0)
+    }
+}
+
+/// "1:05", "0:09".
+fn clock(secs: f32) -> String {
+    let secs = secs.ceil() as u32;
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// "30 s", "2 min".
+fn duration_label(secs: u32) -> String {
+    if secs < 60 {
+        trf("{} s", &[&secs])
+    } else {
+        trf("{} min", &[&(secs / 60)])
+    }
 }
 
 /// Images in reading order: rows top to bottom, each row left to right. An image joins a row
@@ -170,6 +223,7 @@ impl CoreBoardApp {
         self.focus = Some(Focus {
             id,
             other: None,
+            practice: None,
             zoom: 1.0,
             pan: Vec2::ZERO,
             opened,
@@ -251,6 +305,84 @@ impl CoreBoardApp {
             focus.zoom = 1.0;
             focus.pan = Vec2::ZERO;
         }
+    }
+
+    /// Gesture practice: opens focus view on a random picture with a timer, one minute each.
+    pub(super) fn start_practice(&mut self) {
+        let order = reading_order(&self.board.items);
+        if order.is_empty() {
+            self.toast(tr("Add some images first, then start gesture practice").into());
+            return;
+        }
+        self.open_focus_on(order[random_below(order.len())]);
+        if let Some(f) = &mut self.focus {
+            f.practice = Some(Practice::new(60));
+        }
+        self.toast(tr("Gesture practice: G changes the time, Space pauses").into());
+    }
+
+    /// G in focus view: starts the timer, then steps through the times, then stops it.
+    fn cycle_practice(&mut self) {
+        let Some(focus) = &mut self.focus else {
+            return;
+        };
+        if focus.other.is_some() {
+            return;
+        }
+        let next = match &focus.practice {
+            None => Some(PRACTICE_TIMES[0]),
+            Some(p) => PRACTICE_TIMES.iter().copied().find(|t| *t > p.secs),
+        };
+        match next {
+            Some(secs) => {
+                let count = focus.practice.as_ref().map_or(1, |p| p.count);
+                focus.practice = Some(Practice {
+                    count,
+                    ..Practice::new(secs)
+                });
+                let label = duration_label(secs);
+                self.toast(trf("Gesture practice: {} per picture", &[&label]));
+            }
+            None => {
+                focus.practice = None;
+                self.toast(tr("Gesture practice off").into());
+            }
+        }
+    }
+
+    /// A random other picture, for practice.
+    fn practice_next(&mut self) {
+        let Some(focus) = &mut self.focus else {
+            return;
+        };
+        let order: Vec<u64> = reading_order(&self.board.items)
+            .into_iter()
+            .filter(|id| *id != focus.id)
+            .collect();
+        if let Some(practice) = &mut focus.practice {
+            practice.since = Instant::now();
+            practice.paused = practice.paused.map(|_| Instant::now());
+            practice.count += 1;
+        }
+        if order.is_empty() {
+            return;
+        }
+        focus.id = order[random_below(order.len())];
+        focus.zoom = 1.0;
+        focus.pan = Vec2::ZERO;
+        focus.switched = Instant::now();
+        self.selection = HashSet::from([focus.id]);
+    }
+
+    /// Moves on when the picture's time is up.
+    fn practice_tick(&mut self, ctx: &egui::Context) {
+        let Some(practice) = self.focus.as_ref().and_then(|f| f.practice.as_ref()) else {
+            return;
+        };
+        if practice.paused.is_none() && practice.left() <= 0.0 {
+            self.practice_next();
+        }
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 
     /// Steps to the next (or previous) image, wrapping around. When comparing, the second image
@@ -378,7 +510,22 @@ impl CoreBoardApp {
             match key {
                 // The image on screen is the selection, so this copies it.
                 Key::C if m.command => copy = true,
+                // In gesture practice Space pauses instead.
+                Key::Space if self.focus.as_ref().is_some_and(|f| f.practice.is_some()) => {
+                    if let Some(p) = self.focus.as_mut().and_then(|f| f.practice.as_mut()) {
+                        match p.paused.take() {
+                            Some(at) => p.since += at.elapsed(),
+                            None => p.paused = Some(Instant::now()),
+                        }
+                    }
+                }
                 Key::Escape | Key::Enter | Key::Space => self.close_focus(),
+                Key::G if !m.command && !m.shift => self.cycle_practice(),
+                Key::ArrowRight | Key::ArrowDown | Key::PageDown
+                    if self.focus.as_ref().is_some_and(|f| f.practice.is_some()) =>
+                {
+                    self.practice_next()
+                }
                 Key::S if !m.command && !m.shift => self.surprise(ctx),
                 Key::ArrowRight | Key::ArrowDown | Key::PageDown => self.step_focus(true),
                 Key::ArrowLeft | Key::ArrowUp | Key::PageUp => self.step_focus(false),
@@ -493,6 +640,9 @@ impl CoreBoardApp {
 
     /// Draws focus view on top of the board.
     pub(super) fn paint_focus(&mut self, ctx: &egui::Context, canvas: Rect) {
+        if self.focus.as_ref().is_some_and(|f| !f.closing) {
+            self.practice_tick(ctx);
+        }
         let Some(focus) = &self.focus else {
             return;
         };
@@ -630,8 +780,14 @@ impl CoreBoardApp {
             }
             let shown_id = layout.last().map(|(item, _, _)| item.id).unwrap_or(0);
             let index = order.iter().position(|id| *id == shown_id).unwrap_or(0);
+            let practice = self.focus.as_ref().and_then(|f| f.practice.as_ref());
             let mut info = if comparing {
                 tr("comparing 2 images").to_string()
+            } else if let Some(p) = practice {
+                trf(
+                    "gesture practice · picture {} · {} each",
+                    &[&p.count, &duration_label(p.secs)],
+                )
             } else {
                 trf("image {} of {}", &[&(index + 1), &order.len()])
             };
@@ -650,6 +806,8 @@ impl CoreBoardApp {
                 Align2::RIGHT_BOTTOM,
                 if comparing {
                     tr("← → change the second image   scroll zoom both   drag pan both   Esc back")
+                } else if practice.is_some() {
+                    tr("Space pause   → skip   G change time   Esc stop")
                 } else {
                     tr("← → step   S surprise   scroll zoom   drag pan   V C B M R study   Esc back")
                 },
@@ -667,6 +825,57 @@ impl CoreBoardApp {
                         Color32::from_gray(90).gamma_multiply(alpha),
                     );
                 }
+            }
+        }
+
+        // Gesture practice: a ring that empties as the picture's time runs out.
+        if let Some(p) = self.focus.as_ref().and_then(|f| f.practice.as_ref())
+            && !closing
+        {
+            let center = pos2(canvas.max.x - 52.0, canvas.min.y + 52.0);
+            let radius = 26.0;
+            let left = p.left() / p.secs.max(1) as f32;
+            let ending = p.left() <= 5.0;
+            painter.circle_filled(center, radius + 8.0, Color32::from_black_alpha(160));
+            painter.circle_stroke(center, radius, Stroke::new(4.0, Color32::from_gray(60)));
+            let steps = 64;
+            let arc: Vec<Pos2> = (0..=((steps as f32 * left).ceil() as usize))
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2
+                        + (i as f32 / steps as f32).min(left) * std::f32::consts::TAU;
+                    center + vec2(a.cos(), a.sin()) * radius
+                })
+                .collect();
+            let color = if ending {
+                Color32::from_rgb(255, 170, 60)
+            } else {
+                ACCENT
+            };
+            if arc.len() > 1 {
+                painter.add(egui::Shape::line(arc, Stroke::new(4.0, color)));
+            }
+            let text = if p.paused.is_some() {
+                "❚❚".to_string()
+            } else {
+                clock(p.left())
+            };
+            painter.text(
+                center,
+                Align2::CENTER_CENTER,
+                text,
+                FontId::proportional(15.0),
+                Color32::WHITE,
+            );
+            if p.paused.is_some() {
+                let galley = painter.layout_no_wrap(
+                    tr("paused").to_string(),
+                    FontId::proportional(12.0),
+                    Color32::WHITE,
+                );
+                let at = center + vec2(0.0, radius + 22.0);
+                let bg = Rect::from_center_size(at, galley.size() + vec2(12.0, 6.0));
+                painter.rect_filled(bg, CornerRadius::same(8), Color32::from_black_alpha(190));
+                painter.galley(bg.center() - galley.size() / 2.0, galley, Color32::WHITE);
             }
         }
 
@@ -734,6 +943,19 @@ mod tests {
         assert!(p[0].max.y < p[1].min.y);
         // One image gets the whole area.
         assert_eq!(panes(wide_window, &[[10.0, 10.0]]), vec![wide_window]);
+    }
+
+    #[test]
+    fn practice_timer_counts_down_and_pauses() {
+        let mut p = Practice::new(60);
+        p.since = Instant::now() - Duration::from_secs(20);
+        assert!((p.left() - 40.0).abs() < 0.5);
+        p.paused = Some(Instant::now());
+        let held = p.left();
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(p.left(), held);
+        assert_eq!(clock(39.2), "0:40");
+        assert_eq!(clock(125.0), "2:05");
     }
 
     #[test]

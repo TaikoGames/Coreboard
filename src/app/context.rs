@@ -246,6 +246,10 @@ impl CoreBoardApp {
             self.surprise(ctx);
             return true;
         }
+        if entry(ui, tr("Gesture practice"), "Shift+S") {
+            self.start_practice();
+            return true;
+        }
         ui.separator();
         if entry(ui, tr("Boards…"), "Ctrl+O") {
             self.open_boards_window();
