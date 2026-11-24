@@ -73,7 +73,7 @@ Boards created by name, and the first default board, live in your platform's dat
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
 | Board file | **Ctrl+Shift+S** saves the whole board as one `.coreboard` file; drag one in to open it |
 | Gesture practice | **Shift+S**: pictures one at a time on a timer; **G** time, **Space** pause |
-| Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second |
+| Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second; **O** lays one over the other |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
 | Crop | Select one image, **X**, drag over the part to keep; **Enter**/**Esc** when done; **Shift+X** resets |
@@ -335,6 +335,12 @@ side*). They open next to each other, or one above the other when that shows the
 Scrolling and dragging zoom and pan both together, so the same spot of each stays in view: handy
 for comparing two poses, two lighting setups, or your drawing against its reference. **← →** swap
 the second picture for the others on the board.
+
+**Overlay check:** while comparing, press **O** to lay the second picture over the first,
+half see-through: the classic way to check a drawing against its reference, where proportions
+and angles that are off jump out. The slider (or **[** and **]**) sets how see-through the top
+picture is. **Shift+drag** moves it and **Shift+scroll** resizes it to line the two up; *Line up
+again* resets that. **O** goes back to side by side.
 
 ## Gesture practice
 

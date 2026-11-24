@@ -2313,11 +2313,12 @@ impl CoreBoardApp {
         ui.separator();
         if restore && let Some(day) = self.restore_day.clone() {
             match self.store.load_backup(&day) {
-                Some(mut old) => {
+                Some(old) => {
+                    // Only what's on the board goes back; today's settings (watched folder,
+                    // export folder, watermark, window) stay as they are.
                     self.checkpoint();
-                    old.view = self.board.view.clone();
-                    old.next_id = old.next_id.max(self.board.next_id);
-                    self.board = old;
+                    self.board.next_id = old.next_id.max(self.board.next_id);
+                    self.board.items = old.items;
                     self.selection.clear();
                     self.touch();
                     self.save_now();

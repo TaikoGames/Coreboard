@@ -667,6 +667,20 @@ const SPANISH: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
+    (
+        "Overlay: [ ] see-through, Shift+drag and Shift+scroll to line them up",
+        "Superpuestas: [ ] transparencia, Mayús+arrastrar y Mayús+rueda para alinearlas",
+    ),
+    ("Side by side", "Lado a lado"),
+    (
+        "O side by side   [ ] see-through   Shift+drag move   Shift+scroll size   Esc back",
+        "O lado a lado   [ ] transparencia   Mayús+arrastrar mover   Mayús+rueda tamaño   Esc volver",
+    ),
+    (
+        "overlay · top picture {}% see-through",
+        "superpuestas · imagen de arriba {}% transparente",
+    ),
+    ("Line up again", "Volver a alinear"),
     ("Earlier versions", "Versiones anteriores"),
     ("As it was on {}", "Como estaba el {}"),
     ("Restore", "Restaurar"),
@@ -749,8 +763,8 @@ const SPANISH: &[(&str, &str)] = &[
     ("comparing 2 images", "comparando 2 imágenes"),
     ("Copied {}", "Copiado {}"),
     (
-        "← → change the second image   scroll zoom both   drag pan both   Esc back",
-        "← → cambiar la segunda imagen   rueda zoom a ambas   arrastrar mueve ambas   Esc volver",
+        "← → change the second   O overlay   scroll zoom both   drag pan both   Esc back",
+        "← → cambiar la segunda   O superponer   rueda zoom a ambas   arrastrar mueve ambas   Esc volver",
     ),
     ("Copy", "Copiar"),
     ("Duplicate", "Duplicar"),
@@ -1352,6 +1366,20 @@ const CATALAN: &[(&str, &str)] = &[
     // Right-click menu
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
+    (
+        "Overlay: [ ] see-through, Shift+drag and Shift+scroll to line them up",
+        "Superposades: [ ] transparència, Maj+arrossegar i Maj+roda per alinear-les",
+    ),
+    ("Side by side", "Una al costat de l'altra"),
+    (
+        "O side by side   [ ] see-through   Shift+drag move   Shift+scroll size   Esc back",
+        "O una al costat de l'altra   [ ] transparència   Maj+arrossegar moure   Maj+roda mida   Esc tornar",
+    ),
+    (
+        "overlay · top picture {}% see-through",
+        "superposades · imatge de dalt {}% transparent",
+    ),
+    ("Line up again", "Tornar a alinear"),
     ("Earlier versions", "Versions anteriors"),
     ("As it was on {}", "Com estava el {}"),
     ("Restore", "Restaurar"),
@@ -1440,8 +1468,8 @@ const CATALAN: &[(&str, &str)] = &[
     ("comparing 2 images", "comparant 2 imatges"),
     ("Copied {}", "Copiat {}"),
     (
-        "← → change the second image   scroll zoom both   drag pan both   Esc back",
-        "← → canviar la segona imatge   roda zoom a totes dues   arrossegar mou totes dues   Esc tornar",
+        "← → change the second   O overlay   scroll zoom both   drag pan both   Esc back",
+        "← → canviar la segona   O superposar   roda zoom a totes dues   arrossegar mou totes dues   Esc tornar",
     ),
     ("Copy", "Copiar"),
     ("Duplicate", "Duplicar"),

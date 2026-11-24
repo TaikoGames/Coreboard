@@ -37,6 +37,30 @@ pub(super) struct Focus {
     switched: Instant,
     /// Gesture practice: a new picture every few seconds.
     practice: Option<Practice>,
+    /// Comparing with one picture laid over the other.
+    overlay: Option<Overlay>,
+}
+
+/// Overlay check: the second picture over the first, see-through, to check a drawing against
+/// its reference. The top picture can be moved and resized to line them up.
+#[derive(Clone, Copy)]
+struct Overlay {
+    /// How much of the top picture shows: 0 = only the bottom one, 1 = only the top one.
+    opacity: f32,
+    /// The top picture's offset from centered, as a fraction of the bottom one's size.
+    offset: Vec2,
+    /// The top picture's size compared to fitting inside the bottom one.
+    scale: f32,
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self {
+            opacity: 0.5,
+            offset: Vec2::ZERO,
+            scale: 1.0,
+        }
+    }
 }
 
 /// Gesture practice: a timed drawing session through the board's pictures, in random order.
@@ -224,6 +248,7 @@ impl CoreBoardApp {
             id,
             other: None,
             practice: None,
+            overlay: None,
             zoom: 1.0,
             pan: Vec2::ZERO,
             opened,
@@ -434,6 +459,17 @@ impl CoreBoardApp {
             canvas.max - vec2(MARGIN, FOOTER),
         );
         let sizes: Vec<[f32; 2]> = items.iter().map(|i| i.size).collect();
+        if let (Some(ov), [bottom, top]) = (focus.overlay, items.as_slice()) {
+            // Both in the whole area: the top one fitted inside the bottom one, then moved and
+            // resized as lined up.
+            let base = fit_into(area, bottom.size);
+            let inside = fit_into(base, top.size);
+            let fit = Rect::from_center_size(
+                base.center() + ov.offset * base.size(),
+                inside.size() * ov.scale,
+            );
+            return vec![(bottom.clone(), base, area), (top.clone(), fit, area)];
+        }
         items
             .into_iter()
             .zip(panes(area, &sizes))
@@ -444,17 +480,73 @@ impl CoreBoardApp {
             .collect()
     }
 
-    /// Where an image fitted at `fit` is shown with the current zoom and pan.
-    fn focus_shown(fit: Rect, zoom: f32, pan: Vec2) -> Rect {
-        Rect::from_center_size(fit.center() + pan * fit.size(), fit.size() * zoom)
+    /// Where an image fitted at `fit` is shown with the current zoom and pan, zooming and
+    /// panning around `base` (its own fit, or the bottom picture's in an overlay, so the two
+    /// stay lined up).
+    fn focus_shown(fit: Rect, base: Rect, zoom: f32, pan: Vec2) -> Rect {
+        Rect::from_center_size(
+            base.center() + (fit.center() - base.center()) * zoom + pan * base.size(),
+            fit.size() * zoom,
+        )
+    }
+
+    /// Where each image of `layout` is shown now.
+    fn focus_rects(&self, layout: &[(Item, Rect, Rect)]) -> Vec<Rect> {
+        let Some(focus) = &self.focus else {
+            return Vec::new();
+        };
+        let overlay = focus.overlay.is_some();
+        layout
+            .iter()
+            .map(|(_, fit, _)| {
+                let base = if overlay { layout[0].1 } else { *fit };
+                Self::focus_shown(*fit, base, focus.zoom, focus.pan)
+            })
+            .collect()
+    }
+
+    /// O while comparing: one picture over the other, or back side by side.
+    fn toggle_overlay(&mut self) {
+        let Some(focus) = &mut self.focus else {
+            return;
+        };
+        if focus.other.is_none() {
+            return;
+        }
+        focus.overlay = match focus.overlay {
+            Some(_) => None,
+            None => Some(Overlay::default()),
+        };
+        focus.zoom = 1.0;
+        focus.pan = Vec2::ZERO;
+        let on = focus.overlay.is_some();
+        self.toast(
+            if on {
+                tr("Overlay: [ ] see-through, Shift+drag and Shift+scroll to line them up")
+            } else {
+                tr("Side by side")
+            }
+            .into(),
+        );
+    }
+
+    /// [ and ] in an overlay: more or less of the top picture.
+    fn overlay_opacity(&mut self, more: bool) {
+        if let Some(ov) = self.focus.as_mut().and_then(|f| f.overlay.as_mut()) {
+            ov.opacity = (ov.opacity + if more { 0.1 } else { -0.1 }).clamp(0.0, 1.0);
+        }
     }
 
     /// The original color under `pos` in focus view, for the color picker.
     pub(super) fn focus_sample(&self, canvas: Rect, pos: Pos2) -> Option<[u8; 3]> {
-        let focus = self.focus.as_ref()?;
-        self.focus_layout(canvas)
+        let layout = self.focus_layout(canvas);
+        let shown = self.focus_rects(&layout);
+        // The top picture first, where they overlap.
+        layout
             .into_iter()
-            .map(|(item, fit, pane)| (item, Self::focus_shown(fit, focus.zoom, focus.pan), pane))
+            .zip(shown)
+            .rev()
+            .map(|((item, _, pane), shown)| (item, shown, pane))
             .find(|(_, shown, pane)| shown.contains(pos) && pane.contains(pos))
             .and_then(|(item, shown, _)| self.sample_item(&item, shown, pos))
     }
@@ -477,11 +569,7 @@ impl CoreBoardApp {
             self.focus = None;
             return;
         }
-        let (zoom, pan) = (focus.zoom, focus.pan);
-        let shown: Vec<Rect> = layout
-            .iter()
-            .map(|(_, fit, _)| Self::focus_shown(*fit, zoom, pan))
-            .collect();
+        let shown = self.focus_rects(&layout);
 
         let (events, scroll, pinch, hover) = ctx.input(|i| {
             (
@@ -521,6 +609,9 @@ impl CoreBoardApp {
                 }
                 Key::Escape | Key::Enter | Key::Space => self.close_focus(),
                 Key::G if !m.command && !m.shift => self.cycle_practice(),
+                Key::O if !m.command => self.toggle_overlay(),
+                Key::OpenBracket => self.overlay_opacity(false),
+                Key::CloseBracket => self.overlay_opacity(true),
                 Key::ArrowRight | Key::ArrowDown | Key::PageDown
                     if self.focus.as_ref().is_some_and(|f| f.practice.is_some()) =>
                 {
@@ -594,6 +685,25 @@ impl CoreBoardApp {
             .unwrap_or(0);
         let (fit, lead_shown) = (layout[lead].1, shown[lead]);
 
+        // In an overlay, Shift moves and resizes the top picture to line it up.
+        let shift = ctx.input(|i| i.modifiers.shift);
+        if let Some(ov) = focus.overlay.as_mut()
+            && shift
+        {
+            let base = shown[0].size();
+            if response.dragged() {
+                ov.offset += response.drag_delta() / base;
+            }
+            let wheel = scroll.y + scroll.x;
+            // Gentler than zooming: lining up needs fine steps.
+            let factor = (wheel * 0.0006).exp() * pinch;
+            if (factor - 1.0).abs() > f32::EPSILON {
+                ov.scale = (ov.scale * factor).clamp(0.2, 5.0);
+            }
+            ctx.set_cursor_icon(egui::CursorIcon::Move);
+            return;
+        }
+
         // Wheel or pinch zooms into details, keeping the spot under the cursor in place.
         let factor = (scroll.y * 0.0025).exp() * pinch;
         if (factor - 1.0).abs() > f32::EPSILON {
@@ -664,8 +774,10 @@ impl CoreBoardApp {
             motion::ease_out_cubic(t)
         };
         let fade = (now.duration_since(focus.switched).as_secs_f32() / STEP.as_secs_f32()).min(1.0);
-        let (zoom, pan, closing) = (focus.zoom, focus.pan, focus.closing);
+        let (zoom, closing) = (focus.zoom, focus.closing);
+        let overlay = focus.overlay;
         let comparing = layout.len() > 1;
+        let targets = self.focus_rects(&layout);
         let animating = t < 1.0 || fade < 1.0;
 
         let layer =
@@ -677,12 +789,13 @@ impl CoreBoardApp {
             Color32::from_black_alpha((238.0 * open) as u8),
         );
 
-        for (index, (item, fit, pane)) in layout.iter().enumerate() {
-            let target = Self::focus_shown(*fit, zoom, pan);
+        for (index, ((item, _, pane), target)) in layout.iter().zip(&targets).enumerate() {
             let on_board = self.item_screen_rect(canvas, item);
-            let rect = lerp_rect(on_board, target, open);
+            let rect = lerp_rect(on_board, *target, open);
+            // The top picture of an overlay, see-through.
+            let on_top = overlay.is_some() && index == 1;
             // Zoomed in, each image stays inside its own half.
-            let clip = if comparing && open >= 1.0 {
+            let clip = if comparing && overlay.is_none() && open >= 1.0 {
                 pane.expand(GAP / 2.0 - 2.0).intersect(canvas)
             } else {
                 canvas
@@ -696,11 +809,19 @@ impl CoreBoardApp {
             // Stepping fades in the image that changed (the second one, when comparing).
             let fades = !comparing || index == 1;
             let shade = if fades { 0.25 + 0.75 * fade } else { 1.0 };
-            let tint = Color32::WHITE.gamma_multiply(shade);
+            let see_through = overlay.filter(|_| on_top).map_or(1.0, |ov| ov.opacity);
+            let tint = Color32::WHITE
+                .gamma_multiply(shade)
+                .gamma_multiply(see_through);
             match self.texture(ctx, &item.file, filter) {
                 Texture::Ready(tex) => {
-                    // A soft shadow lifts it off the backdrop.
-                    for (grow, alpha) in [(18.0, 40.0), (8.0, 60.0)] {
+                    // A soft shadow lifts it off the backdrop (not under a see-through picture).
+                    let shadows: &[(f32, f32)] = if on_top {
+                        &[]
+                    } else {
+                        &[(18.0, 40.0), (8.0, 60.0)]
+                    };
+                    for &(grow, alpha) in shadows {
                         painter.rect_filled(
                             rect.translate(vec2(0.0, 8.0)).expand(grow * open),
                             CornerRadius::same((grow * open) as u8),
@@ -743,7 +864,8 @@ impl CoreBoardApp {
             let order = reading_order(&self.board.items);
             let footer = canvas.max.y - FOOTER + 14.0;
             let mut y = footer;
-            let side_by_side = comparing && layout[0].2.min.y == layout[1].2.min.y;
+            let side_by_side =
+                comparing && overlay.is_none() && layout[0].2.min.y == layout[1].2.min.y;
             if side_by_side {
                 // Each caption under its own image.
                 for (item, _, pane) in &layout {
@@ -781,7 +903,12 @@ impl CoreBoardApp {
             let shown_id = layout.last().map(|(item, _, _)| item.id).unwrap_or(0);
             let index = order.iter().position(|id| *id == shown_id).unwrap_or(0);
             let practice = self.focus.as_ref().and_then(|f| f.practice.as_ref());
-            let mut info = if comparing {
+            let mut info = if let Some(ov) = overlay {
+                trf(
+                    "overlay · top picture {}% see-through",
+                    &[&(((1.0 - ov.opacity) * 100.0).round() as i32)],
+                )
+            } else if comparing {
                 tr("comparing 2 images").to_string()
             } else if let Some(p) = practice {
                 trf(
@@ -804,8 +931,10 @@ impl CoreBoardApp {
             painter.text(
                 canvas.right_bottom() + vec2(-16.0, -12.0),
                 Align2::RIGHT_BOTTOM,
-                if comparing {
-                    tr("← → change the second image   scroll zoom both   drag pan both   Esc back")
+                if overlay.is_some() {
+                    tr("O side by side   [ ] see-through   Shift+drag move   Shift+scroll size   Esc back")
+                } else if comparing {
+                    tr("← → change the second   O overlay   scroll zoom both   drag pan both   Esc back")
                 } else if practice.is_some() {
                     tr("Space pause   → skip   G change time   Esc stop")
                 } else {
@@ -876,6 +1005,38 @@ impl CoreBoardApp {
                 let bg = Rect::from_center_size(at, galley.size() + vec2(12.0, 6.0));
                 painter.rect_filled(bg, CornerRadius::same(8), Color32::from_black_alpha(190));
                 painter.galley(bg.center() - galley.size() / 2.0, galley, Color32::WHITE);
+            }
+        }
+
+        // The overlay's see-through slider, above the footer.
+        if let Some(mut ov) = overlay
+            && !closing
+            && open >= 1.0
+        {
+            let before = ov;
+            egui::Area::new(egui::Id::unique("coreboard-overlay-slider"))
+                .order(egui::Order::Tooltip)
+                .fixed_pos(pos2(
+                    canvas.center().x - 190.0,
+                    canvas.max.y - FOOTER - 44.0,
+                ))
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Bottom"));
+                            ui.add(egui::Slider::new(&mut ov.opacity, 0.0..=1.0).show_value(false));
+                            ui.label(tr("Top"));
+                            if ui.button(tr("Line up again")).clicked() {
+                                ov.offset = Vec2::ZERO;
+                                ov.scale = 1.0;
+                            }
+                        });
+                    });
+                });
+            if (ov.opacity, ov.offset, ov.scale) != (before.opacity, before.offset, before.scale)
+                && let Some(f) = &mut self.focus
+            {
+                f.overlay = Some(ov);
             }
         }
 
