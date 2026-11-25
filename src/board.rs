@@ -63,6 +63,10 @@ pub struct Item {
     /// Items with the same group are picked and moved together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u64>,
+    /// Perspective study: up to three vanishing points, in the same space as drawn marks (so
+    /// they follow cropping, rotation and mirroring). They may lie outside the picture.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vanishing: Vec<[f32; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +337,7 @@ impl Default for Item {
             marks: Vec::new(),
             caption: String::new(),
             group: None,
+            vanishing: Vec::new(),
         }
     }
 }
@@ -773,12 +778,12 @@ impl Store {
 
     /// Before the first save of a day, keeps the board as it was last saved on an earlier day,
     /// named after that day. The newest `KEEP_BACKUPS` days are kept.
-    fn back_up(&self, today: u64) -> io::Result<()> {
+    fn back_up(&self, today: Day) -> io::Result<()> {
         let current = self.dir.join("board.json");
         let Ok(modified) = fs::metadata(&current).and_then(|m| m.modified()) else {
             return Ok(());
         };
-        let day = days_since_epoch(modified);
+        let day = local_day(modified);
         if day >= today {
             return Ok(());
         }
@@ -823,28 +828,21 @@ impl Store {
 /// How many days of backups each board keeps.
 pub const KEEP_BACKUPS: usize = 7;
 
-fn days_since_epoch(time: std::time::SystemTime) -> u64 {
-    time.duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() / 86_400)
-        .unwrap_or(0)
+/// A calendar day on this computer's clock (its own time zone, so an evening's changes are
+/// filed under that evening's date).
+pub type Day = chrono::NaiveDate;
+
+fn local_day(time: std::time::SystemTime) -> Day {
+    chrono::DateTime::<chrono::Local>::from(time).date_naive()
 }
 
-fn today() -> u64 {
-    days_since_epoch(std::time::SystemTime::now())
+fn today() -> Day {
+    chrono::Local::now().date_naive()
 }
 
-/// "2026-11-23" for a day counted from 1970-01-01 (Howard Hinnant's civil-from-days).
-pub fn date_text(day: u64) -> String {
-    let z = day as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
+/// "2026-11-23".
+pub fn date_text(day: Day) -> String {
+    day.format("%Y-%m-%d").to_string()
 }
 
 pub fn default_board_dir() -> PathBuf {
@@ -878,11 +876,17 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 mod backup_tests {
     use super::*;
 
+    fn day(n: u64) -> Day {
+        Day::from_ymd_opt(2026, 1, 1).unwrap() + chrono::Days::new(n)
+    }
+
     #[test]
     fn writes_dates() {
-        assert_eq!(date_text(0), "1970-01-01");
-        assert_eq!(date_text(20_415), "2025-11-23");
-        assert_eq!(date_text(19_782), "2024-02-29");
+        assert_eq!(date_text(day(0)), "2026-01-01");
+        assert_eq!(
+            date_text(Day::from_ymd_opt(2024, 2, 29).unwrap()),
+            "2024-02-29"
+        );
     }
 
     #[test]
@@ -905,7 +909,7 @@ mod backup_tests {
         // Saved today: no backup yet.
         assert!(store.backups().is_empty());
         // The next day's first save keeps today's version first.
-        let tomorrow = today() + 1;
+        let tomorrow = today() + chrono::Days::new(1);
         store.back_up(tomorrow).unwrap();
         store.back_up(tomorrow).unwrap();
         assert_eq!(store.backups(), vec![date_text(today())]);
@@ -930,15 +934,17 @@ mod backup_tests {
         let store = Store::open(dir.clone()).unwrap();
         store.save(&Board::default()).unwrap();
         fs::create_dir_all(store.backup_dir()).unwrap();
-        for day in 1..=10u64 {
-            let path = store.backup_dir().join(format!("{}.json", date_text(day)));
+        for n in 1..=10u64 {
+            let path = store
+                .backup_dir()
+                .join(format!("{}.json", date_text(day(n))));
             fs::write(path, b"{}").unwrap();
         }
-        store.back_up(today() + 1).unwrap();
+        store.back_up(today() + chrono::Days::new(1)).unwrap();
         let kept = store.backups();
         assert_eq!(kept.len(), KEEP_BACKUPS);
         assert_eq!(kept[0], date_text(today()));
-        assert_eq!(kept[1], date_text(10));
+        assert_eq!(kept[1], date_text(day(10)));
         let _ = fs::remove_dir_all(&dir);
     }
 }

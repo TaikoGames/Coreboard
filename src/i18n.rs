@@ -668,6 +668,67 @@ const SPANISH: &[(&str, &str)] = &[
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
     (
+        "Measure: drag across something to use it as the unit (a head, say)",
+        "Medir: arrastra sobre algo para usarlo como unidad (una cabeza, por ejemplo)",
+    ),
+    (
+        "Perspective lines removed",
+        "Líneas de perspectiva quitadas",
+    ),
+    (
+        "Perspective: click where lines meet to add a vanishing point",
+        "Perspectiva: haz clic donde se juntan las líneas para añadir un punto de fuga",
+    ),
+    (
+        "Select one picture, then press J for perspective lines",
+        "Selecciona una imagen y pulsa J para las líneas de perspectiva",
+    ),
+    (
+        "Select two or more pictures to sort",
+        "Selecciona dos o más imágenes para ordenarlas",
+    ),
+    (
+        "Sorted by color, grays last",
+        "Ordenadas por color, los grises al final",
+    ),
+    ("Sorted from light to dark", "Ordenadas de clara a oscura"),
+    (
+        "Three points at most: drag one to move it, Backspace removes",
+        "Tres puntos como máximo: arrastra uno para moverlo, Retroceso lo quita",
+    ),
+    (
+        "Unit set: now drag across anything to compare",
+        "Unidad fijada: ahora arrastra sobre lo que quieras comparar",
+    ),
+    ("unit", "unidad"),
+    (
+        "Measuring · drag across the unit (a head, say) · Shift keeps it straight · Esc done",
+        "Midiendo · arrastra sobre la unidad (una cabeza, por ejemplo) · Mayús la mantiene recta · Esc terminar",
+    ),
+    (
+        "Measuring · drag to compare · Backspace undo · Shift keeps it straight · Esc done",
+        "Midiendo · arrastra para comparar · Retroceso deshacer · Mayús la mantiene recta · Esc terminar",
+    ),
+    (
+        "Perspective · click to add a vanishing point · drag to move · Backspace remove · Esc done",
+        "Perspectiva · clic para añadir un punto de fuga · arrastra para mover · Retroceso quitar · Esc terminar",
+    ),
+    (
+        "measure: drag a unit, then compare lengths",
+        "medir: arrastra una unidad y compara longitudes",
+    ),
+    (
+        "perspective lines / remove them",
+        "líneas de perspectiva / quitarlas",
+    ),
+    (
+        "sort light to dark / by color",
+        "ordenar de clara a oscura / por color",
+    ),
+    ("K", "K"),
+    ("J / Shift+J", "J / Mayús+J"),
+    ("Alt+L / Alt+R", "Alt+L / Alt+R"),
+    (
         "Overlay: [ ] see-through, Shift+drag and Shift+scroll to line them up",
         "Superpuestas: [ ] transparencia, Mayús+arrastrar y Mayús+rueda para alinearlas",
     ),
@@ -1367,6 +1428,64 @@ const CATALAN: &[(&str, &str)] = &[
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
     (
+        "Measure: drag across something to use it as the unit (a head, say)",
+        "Mesurar: arrossega sobre alguna cosa per fer-la servir d'unitat (un cap, per exemple)",
+    ),
+    ("Perspective lines removed", "Línies de perspectiva tretes"),
+    (
+        "Perspective: click where lines meet to add a vanishing point",
+        "Perspectiva: fes clic on s'ajunten les línies per afegir un punt de fuga",
+    ),
+    (
+        "Select one picture, then press J for perspective lines",
+        "Selecciona una imatge i prem J per a les línies de perspectiva",
+    ),
+    (
+        "Select two or more pictures to sort",
+        "Selecciona dues o més imatges per ordenar-les",
+    ),
+    (
+        "Sorted by color, grays last",
+        "Ordenades per color, els grisos al final",
+    ),
+    ("Sorted from light to dark", "Ordenades de clara a fosca"),
+    (
+        "Three points at most: drag one to move it, Backspace removes",
+        "Tres punts com a màxim: arrossega'n un per moure'l, Retrocés el treu",
+    ),
+    (
+        "Unit set: now drag across anything to compare",
+        "Unitat fixada: ara arrossega sobre el que vulguis comparar",
+    ),
+    ("unit", "unitat"),
+    (
+        "Measuring · drag across the unit (a head, say) · Shift keeps it straight · Esc done",
+        "Mesurant · arrossega sobre la unitat (un cap, per exemple) · Maj la manté recta · Esc acabar",
+    ),
+    (
+        "Measuring · drag to compare · Backspace undo · Shift keeps it straight · Esc done",
+        "Mesurant · arrossega per comparar · Retrocés desfer · Maj la manté recta · Esc acabar",
+    ),
+    (
+        "Perspective · click to add a vanishing point · drag to move · Backspace remove · Esc done",
+        "Perspectiva · clic per afegir un punt de fuga · arrossega per moure · Retrocés treure · Esc acabar",
+    ),
+    (
+        "measure: drag a unit, then compare lengths",
+        "mesurar: arrossega una unitat i compara llargades",
+    ),
+    (
+        "perspective lines / remove them",
+        "línies de perspectiva / treure-les",
+    ),
+    (
+        "sort light to dark / by color",
+        "ordenar de clara a fosca / per color",
+    ),
+    ("K", "K"),
+    ("J / Shift+J", "J / Maj+J"),
+    ("Alt+L / Alt+R", "Alt+L / Alt+R"),
+    (
         "Overlay: [ ] see-through, Shift+drag and Shift+scroll to line them up",
         "Superposades: [ ] transparència, Maj+arrossegar i Maj+roda per alinear-les",
     ),
@@ -1528,6 +1647,8 @@ mod tests {
             include_str!("app/context.rs"),
             include_str!("app/loupe.rs"),
             include_str!("app/boardfiles.rs"),
+            include_str!("app/tools.rs"),
+            include_str!("app/sorting.rs"),
             include_str!("boardfile.rs"),
         ];
         let mut missing = Vec::new();

@@ -31,6 +31,8 @@ mod motion;
 mod organize;
 mod pdfs;
 mod slots;
+mod sorting;
+mod tools;
 mod updates;
 mod watch;
 use cards::draw_card;
@@ -318,6 +320,8 @@ pub struct CoreBoardApp {
     /// picked to restore.
     backups: Vec<String>,
     restore_day: Option<String>,
+    /// Measuring or perspective, while on.
+    tool: Option<tools::Tool>,
 }
 
 impl CoreBoardApp {
@@ -413,6 +417,7 @@ impl CoreBoardApp {
             clipboard: arboard::Clipboard::new().ok(),
             backups: Vec::new(),
             restore_day: None,
+            tool: None,
         }
     }
 
@@ -978,6 +983,12 @@ impl CoreBoardApp {
     /// Packs items into rows, in reading order, starting at their current top-left corner.
     /// With `uniform`, every item is first scaled to the median height.
     fn arrange_grid(&mut self, uniform: bool) {
+        self.arrange_grid_by(uniform, None);
+    }
+
+    /// Lays the selection (or everything) out in rows: in reading order, or by `key` (lowest
+    /// first) when given. Items without a key keep reading order, after the keyed ones.
+    fn arrange_grid_by(&mut self, uniform: bool, key: Option<&HashMap<u64, f32>>) {
         const GAP: f32 = 16.0;
         let targets = self.targets();
         let mut picked: Vec<usize> = (0..self.board.items.len())
@@ -999,7 +1010,19 @@ impl CoreBoardApp {
             let (a, b) = (&items[a], &items[b]);
             let ay = a.pos[1] + a.size[1] / 2.0;
             let by = b.pos[1] + b.size[1] / 2.0;
-            ay.total_cmp(&by).then(a.pos[0].total_cmp(&b.pos[0]))
+            let reading = ay.total_cmp(&by).then(a.pos[0].total_cmp(&b.pos[0]));
+            match key {
+                Some(key) => {
+                    let (ka, kb) = (key.get(&a.id), key.get(&b.id));
+                    match (ka, kb) {
+                        (Some(x), Some(y)) => x.total_cmp(y).then(reading),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => reading,
+                    }
+                }
+                None => reading,
+            }
         });
 
         if uniform {
@@ -2354,6 +2377,7 @@ impl CoreBoardApp {
         self.drag = Drag::None;
         self.crop_mode = None;
         self.draw_mode = false;
+        self.tool = None;
         self.radial = None;
         self.finder = None;
         self.reset_motion();
@@ -2479,8 +2503,8 @@ impl CoreBoardApp {
                     ..
                 } => match key {
                     // Modified keys first, so they aren't caught by the plain-key arms below.
-                    Key::L if !m.command && m.shift => self.toggle_pin(canvas),
-                    Key::L if !m.command => self.toggle_lock(),
+                    Key::L if !m.command && !m.alt && m.shift => self.toggle_pin(canvas),
+                    Key::L if !m.command && !m.alt => self.toggle_lock(),
                     Key::C if m.command => copy_requested = true,
                     Key::G if m.command && m.shift => self.toggle_group(),
                     Key::T if m.command => self.open_tags_window(),
@@ -2494,11 +2518,14 @@ impl CoreBoardApp {
                     Key::M if m.alt => self.align_selection(Align::CenterY),
                     Key::H if m.alt => self.distribute_selection(true),
                     Key::V if m.alt => self.distribute_selection(false),
+                    Key::L if m.alt => self.sort_selection(sorting::SortBy::Value),
+                    Key::R if m.alt => self.sort_selection(sorting::SortBy::Color),
                     Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown
                         if !m.command =>
                     {
                         self.nudge(*key, m.shift)
                     }
+                    Key::Delete | Key::Backspace if self.tool.is_some() => self.tool_back(),
                     Key::Delete | Key::Backspace => self.delete_selection(),
                     Key::A if m.command => {
                         self.selection = self.board.items.iter().map(|i| i.id).collect();
@@ -2535,6 +2562,10 @@ impl CoreBoardApp {
                     Key::Enter if !m.command && self.editing.is_none() => {
                         self.open_focus(canvas, hover);
                     }
+                    Key::Escape if self.tool.is_some() => self.tool = None,
+                    Key::K if !m.command => self.toggle_measure(),
+                    Key::J if !m.command && m.shift => self.clear_perspective(),
+                    Key::J if !m.command => self.toggle_perspective(),
                     Key::Escape if self.crop_mode.is_some() => self.toggle_crop_mode(),
                     Key::Escape if self.radial.is_some() => self.radial = None,
                     Key::Escape if self.draw_mode => self.toggle_draw_mode(),
@@ -2657,6 +2688,16 @@ impl CoreBoardApp {
             }
             press => press,
         };
+        // With measuring or perspective on, a left click belongs to the tool.
+        let press = match press {
+            Some((pos, egui::PointerButton::Primary))
+                if !ctx.input(|i| i.key_down(Key::Space)) && self.tool_press(canvas, pos) =>
+            {
+                None
+            }
+            press => press,
+        };
+        self.tool_drag(&ctx, canvas);
         if press.is_some() {
             // Grabbing the board stops anything coasting or flying.
             self.stop_motion();
@@ -3196,6 +3237,7 @@ impl CoreBoardApp {
             self.touch();
         }
 
+        self.paint_tools(&ctx, &painter, canvas);
         if self.picker
             && !self.focus_open()
             && let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
@@ -3930,6 +3972,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("G / Shift+G", "grid arrange / same height"),
             ("Alt+arrows, Alt+C / M", "align"),
             ("Alt+H / Alt+V", "space evenly"),
+            ("Alt+L / Alt+R", "sort light to dark / by color"),
             ("Alt while dragging", "move without snapping"),
             ("Arrows / Shift+arrows", "nudge 1 / 10 points"),
             ("L / Shift+L", "lock / pin to screen"),
@@ -3959,6 +4002,8 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Shift+B", "whole board in values"),
             ("C / Shift+C", "composition guide / turn spiral"),
             ("I", "color picker (HSV + value); click copies it"),
+            ("K", "measure: drag a unit, then compare lengths"),
+            ("J / Shift+J", "perspective lines / remove them"),
             ("P / Shift+P", "6 / 10 color palette"),
             ("Hold Q", "radial menu: find similar, web…"),
         ],

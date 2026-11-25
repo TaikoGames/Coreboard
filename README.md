@@ -73,6 +73,9 @@ Boards created by name, and the first default board, live in your platform's dat
 | Focus view | **Enter** shows the selected image (or the one under the cursor) big on a dark backdrop; **← →** step through every image |
 | Board file | **Ctrl+Shift+S** saves the whole board as one `.coreboard` file; drag one in to open it |
 | Gesture practice | **Shift+S**: pictures one at a time on a timer; **G** time, **Space** pause |
+| Measure | **K**, drag a unit (a head), then drag to compare: lengths show as 3½, 2… |
+| Perspective lines | Select a picture, **J**, click to add vanishing points; **Shift+J** removes them |
+| Sort | **Alt+L** light to dark, **Alt+R** by color |
 | Compare | Select two images, **Enter**: side by side, zooming and panning together; **← →** change the second; **O** lays one over the other |
 | Whole-board values | **Shift+B**: every image and palette in grayscale, then 3 tones, then back to color |
 | Draw on images | **D**, then drag on an image: arrow, circle, box or pen, in 6 colors; **Shift+D** hides drawings |
@@ -358,6 +361,29 @@ Core Board keeps a copy of each board as it was at the end of every day you chan
 last seven days. In the Boards window, *Earlier versions* lists them: pick a day and **Restore**
 puts the board back the way it was then. **Ctrl+Z** undoes a restore, and the pictures of every
 kept day stay safe until that day's copy is gone.
+
+## Measuring
+
+Press **K** and drag across something to make it the unit: a head, say. Then drag across
+anything else and its length shows in units, like **3½** for a figure three and a half heads
+tall, or **2** for shoulders two heads wide. **Shift** keeps a line level or upright,
+**Backspace** takes back the last line (and then the unit), and **Esc** or **K** puts the tool
+away. The lines stay put while you zoom and pan.
+
+## Perspective lines
+
+Select a picture and press **J**, then click where lines in it meet to add a vanishing point (up
+to three, and they can sit outside the picture). Lines fan out from each point across the
+picture in its own color, with the horizon through the first two. Drag a point to move it,
+**Backspace** removes the last one, **Esc** or **J** finishes. The lines stay on the picture,
+saved with it; **Shift+J** removes them.
+
+## Sort by value or color
+
+**Alt+L** lays the selected pictures (or all of them) out in rows from lightest to darkest, and
+**Alt+R** around the color wheel, reds first, with grays and near-grays last. Good for seeing a
+board's mood at a glance or gathering all the warm references together. **Ctrl+Z** puts them
+back.
 
 ## Captions, duplicates and whole-board values
 
