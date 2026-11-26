@@ -7,6 +7,7 @@
 //!   move it. The points are saved with the picture.
 
 use super::*;
+use crate::perspective;
 
 pub(super) enum Tool {
     /// Lines in board coordinates, so they stay put while panning and zooming.
@@ -24,80 +25,16 @@ pub(super) enum Tool {
 }
 
 /// One color per vanishing point.
-const POINT_COLORS: [Color32; 3] = [
-    Color32::from_rgb(255, 150, 60),
-    Color32::from_rgb(80, 200, 255),
-    Color32::from_rgb(235, 105, 235),
-];
-/// Lines fanning from each point across the picture (more when it sits inside the picture).
-const RAYS_ACROSS: usize = 11;
-const RAYS_AROUND: usize = 16;
+const POINT_COLORS: [Color32; 3] = {
+    let c = crate::perspective::COLORS;
+    [
+        Color32::from_rgb(c[0][0], c[0][1], c[0][2]),
+        Color32::from_rgb(c[1][0], c[1][1], c[1][2]),
+        Color32::from_rgb(c[2][0], c[2][1], c[2][2]),
+    ]
+};
 /// How close (screen points) a click must be to grab a vanishing point.
 const GRAB: f32 = 12.0;
-
-/// The part of segment a-b inside `rect` (Liang–Barsky), if any.
-fn clip_segment(a: Pos2, b: Pos2, rect: Rect) -> Option<(Pos2, Pos2)> {
-    let d = b - a;
-    let (mut t0, mut t1) = (0.0f32, 1.0f32);
-    for (p, q) in [
-        (-d.x, a.x - rect.min.x),
-        (d.x, rect.max.x - a.x),
-        (-d.y, a.y - rect.min.y),
-        (d.y, rect.max.y - a.y),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return None;
-            }
-            continue;
-        }
-        let t = q / p;
-        if p < 0.0 {
-            t0 = t0.max(t);
-        } else {
-            t1 = t1.min(t);
-        }
-        if t0 > t1 {
-            return None;
-        }
-    }
-    Some((a + d * t0, a + d * t1))
-}
-
-/// The whole line through a and b, as far as `rect` shows it.
-fn clip_line(a: Pos2, b: Pos2, rect: Rect) -> Option<(Pos2, Pos2)> {
-    let d = (b - a).normalized() * (rect.size().length() * 4.0 + a.distance(rect.center()) * 2.0);
-    if !d.x.is_finite() || d == Vec2::ZERO {
-        return None;
-    }
-    clip_segment(a - d, a + d, rect)
-}
-
-/// Directions (radians) for the lines fanning out from `p` so they cover `rect` evenly: spread
-/// between the picture's outermost corners as seen from the point, or all the way round when
-/// the point is on the picture.
-fn ray_angles(p: Pos2, rect: Rect) -> Vec<f32> {
-    use std::f32::consts::{PI, TAU};
-    if rect.contains(p) {
-        return (0..RAYS_AROUND)
-            .map(|i| i as f32 / RAYS_AROUND as f32 * TAU)
-            .collect();
-    }
-    let toward = (rect.center() - p).angle();
-    let wrap = |a: f32| (a + PI).rem_euclid(TAU) - PI;
-    let (lo, hi) = [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
-    ]
-    .iter()
-    .map(|c| wrap((*c - p).angle() - toward))
-    .fold((f32::MAX, f32::MIN), |(lo, hi), a| (lo.min(a), hi.max(a)));
-    (0..RAYS_ACROSS)
-        .map(|i| toward + lo + (hi - lo) * (i as f32 + 0.5) / RAYS_ACROSS as f32)
-        .collect()
-}
 
 /// "2.4×" (how many units long), or "unit".
 fn units_label(length: f32, unit: Option<f32>) -> String {
@@ -426,34 +363,12 @@ impl CoreBoardApp {
         if !rect.intersects(canvas) && !editing {
             return;
         }
-        let points: Vec<Pos2> = item
-            .vanishing
-            .iter()
-            .map(|p| self.point_on_screen(canvas, item, *p))
-            .collect();
-        let inside = painter.with_clip_rect(rect.intersect(canvas));
-        for (p, color) in points.iter().zip(POINT_COLORS) {
-            let reach = rect.size().length() * 2.0 + p.distance(rect.center()) * 2.0;
-            for angle in ray_angles(*p, rect) {
-                let far = *p + Vec2::angled(angle) * reach;
-                if let Some((a, b)) = clip_segment(*p, far, rect) {
-                    inside.line_segment([a, b], Stroke::new(2.5, Color32::from_black_alpha(80)));
-                    inside.line_segment([a, b], Stroke::new(1.2, color));
-                }
-            }
-        }
-        // The horizon: through the first two points, or level through a single one.
-        if let Some(&first) = points.first() {
-            let second = points.get(1).copied().unwrap_or(first + vec2(100.0, 0.0));
-            let area = if editing { canvas } else { rect };
-            if let Some((a, b)) = clip_line(first, second, area) {
-                let p = painter.with_clip_rect(area);
-                p.line_segment([a, b], Stroke::new(4.0, Color32::from_black_alpha(120)));
-                p.line_segment([a, b], Stroke::new(2.0, ACCENT));
-            }
-        }
+        // While placing points, the horizon runs across the whole window.
+        let horizon_area = if editing { canvas } else { rect };
+        paint_perspective_lines(painter, rect, canvas, item, horizon_area);
         if editing {
-            for (n, (p, color)) in points.iter().zip(POINT_COLORS).enumerate() {
+            for (n, p) in vanishing_on(rect, item).iter().enumerate() {
+                let color = POINT_COLORS[n % POINT_COLORS.len()];
                 painter.circle_filled(*p, 9.0, Color32::from_black_alpha(200));
                 painter.circle_stroke(*p, 9.0, Stroke::new(2.0, color));
                 painter.text(
@@ -465,6 +380,43 @@ impl CoreBoardApp {
                 );
             }
         }
+    }
+}
+
+/// A picture's vanishing points, for the picture drawn at `rect`.
+fn vanishing_on(rect: Rect, item: &Item) -> Vec<Pos2> {
+    item.vanishing
+        .iter()
+        .map(|p| {
+            let [x, y] = item.mark_to_local(*p);
+            rect.min + vec2(x, y) * rect.size()
+        })
+        .collect()
+}
+
+/// A picture's perspective lines, for the picture drawn at `rect` (on the board, or big in
+/// focus view), kept within `clip`.
+pub(super) fn paint_perspective_lines(
+    painter: &egui::Painter,
+    rect: Rect,
+    clip: Rect,
+    item: &Item,
+    horizon_area: Rect,
+) {
+    let points = vanishing_on(rect, item);
+    let lines = perspective::lines(rect, &points, horizon_area);
+    let inside = painter.with_clip_rect(rect.intersect(clip));
+    for (a, b, n) in lines.rays {
+        inside.line_segment([a, b], Stroke::new(2.5, Color32::from_black_alpha(80)));
+        inside.line_segment(
+            [a, b],
+            Stroke::new(1.2, POINT_COLORS[n % POINT_COLORS.len()]),
+        );
+    }
+    if let Some((a, b)) = lines.horizon {
+        let p = painter.with_clip_rect(horizon_area.intersect(clip));
+        p.line_segment([a, b], Stroke::new(4.0, Color32::from_black_alpha(120)));
+        p.line_segment([a, b], Stroke::new(2.0, ACCENT));
     }
 }
 
@@ -483,19 +435,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clips_lines_to_the_picture() {
-        let rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 50.0));
-        // From far left, straight across.
-        let (a, b) = clip_segment(pos2(-50.0, 25.0), pos2(250.0, 25.0), rect).unwrap();
-        assert_eq!((a, b), (pos2(0.0, 25.0), pos2(100.0, 25.0)));
-        // Missing it entirely.
-        assert!(clip_segment(pos2(-50.0, -10.0), pos2(250.0, -10.0), rect).is_none());
-        // A whole line through two points outside, crossing it diagonally.
-        let (a, b) = clip_line(pos2(-10.0, -10.0), pos2(-5.0, -5.0), rect).unwrap();
-        assert!(a.distance(pos2(0.0, 0.0)) < 1e-3 && b.distance(pos2(50.0, 50.0)) < 1e-3);
-    }
-
-    #[test]
     fn says_lengths_in_units() {
         assert_eq!(units_label(35.0, Some(10.0)), "3½");
         assert_eq!(units_label(70.0, Some(10.0)), "7");
@@ -505,14 +444,5 @@ mod tests {
             snap_straight(pos2(0.0, 0.0), pos2(10.0, 3.0)),
             pos2(10.0, 0.0)
         );
-        let rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 100.0));
-        // From the left, every line crosses the picture.
-        let from = pos2(-200.0, 50.0);
-        let angles = ray_angles(from, rect);
-        assert_eq!(angles.len(), RAYS_ACROSS);
-        for a in angles {
-            assert!(clip_segment(from, from + Vec2::angled(a) * 1000.0, rect).is_some());
-        }
-        assert_eq!(ray_angles(pos2(50.0, 50.0), rect).len(), RAYS_AROUND);
     }
 }

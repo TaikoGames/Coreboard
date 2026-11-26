@@ -117,7 +117,7 @@ fn duration_label(secs: u32) -> String {
 /// Images in reading order: rows top to bottom, each row left to right. An image joins a row
 /// when its center sits within the first image of that row, so slightly uneven rows still read
 /// as one.
-fn reading_order(items: &[Item]) -> Vec<u64> {
+pub(super) fn reading_order(items: &[Item]) -> Vec<u64> {
     let mut images: Vec<&Item> = items.iter().filter(|i| i.is_image()).collect();
     let center_y = |i: &Item| i.pos[1] + i.size[1] / 2.0;
     images.sort_by(|a, b| center_y(a).total_cmp(&center_y(b)));
@@ -855,6 +855,10 @@ impl CoreBoardApp {
                 for mark in &item.marks {
                     clipped.extend(item_mark_shapes(rect, item, mark, scale, 1.0));
                 }
+            }
+            // Perspective lines come along, and follow zooming in.
+            if !item.vanishing.is_empty() && open > 0.0 {
+                tools::paint_perspective_lines(&painter, rect, clip, item, rect);
             }
         }
 

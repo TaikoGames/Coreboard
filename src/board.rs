@@ -637,6 +637,8 @@ pub struct Watermark {
     pub position: WatermarkPosition,
     /// 0.1..=1.0
     pub opacity: f32,
+    /// Draw pictures' perspective lines into exports too.
+    pub perspective_lines: bool,
 }
 
 impl Default for Watermark {
@@ -645,6 +647,7 @@ impl Default for Watermark {
             text: String::new(),
             position: WatermarkPosition::default(),
             opacity: 0.6,
+            perspective_lines: false,
         }
     }
 }
@@ -665,6 +668,9 @@ pub struct Board {
     /// A folder whose new images are added to the board automatically.
     #[serde(default)]
     pub watch: Option<WatchFolder>,
+    /// Contact sheet (PDF) settings.
+    #[serde(default)]
+    pub contact: crate::contact::Options,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -259,7 +259,7 @@ impl CoreBoardApp {
             self.save_board_file();
             return true;
         }
-        if !self.board.items.is_empty() && entry(ui, tr("Export PNG…"), "Ctrl+E") {
+        if !self.board.items.is_empty() && entry(ui, tr("Export PNG or PDF…"), "Ctrl+E") {
             self.show_export = true;
             return true;
         }

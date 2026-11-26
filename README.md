@@ -377,6 +377,8 @@ to three, and they can sit outside the picture). Lines fan out from each point a
 picture in its own color, with the horizon through the first two. Drag a point to move it,
 **Backspace** removes the last one, **Esc** or **J** finishes. The lines stay on the picture,
 saved with it; **Shift+J** removes them.
+They come along when you open the picture big in focus view, and the export window has an
+*Include perspective lines* box to draw them into exported PNGs too, to share a study.
 
 ## Sort by value or color
 
@@ -461,6 +463,15 @@ The text gets a soft shadow so it reads on light and dark images. Your watermark
 with the board. Exports go to the board's `exports/` folder as `coreboard-<date>-<time>.png` (UTC);
 use **Change…** in the dialog to pick another folder for this board (**Reset** goes back). Very large boards are scaled down to fit 8192 px.
 
+
+### Contact sheet (PDF)
+
+The export window (**Ctrl+E**) also makes a **contact sheet**: the selected pictures (or all of
+them) in a neat grid on printable pages, in reading order, each with its caption underneath, and
+the board's name, the date and page numbers at the top. Choose 2 to 5 pictures per row and the
+paper size (Letter or A4; automatic picks Letter in Canada and the US). Pictures print as the
+board shows them: cropped, turned, mirrored, black and white. Good for printing references or
+sending a selection to a client.
 ## Overlay mode
 
 Lower the opacity with **[** and press **T** to keep the board floating above other apps, e.g. to

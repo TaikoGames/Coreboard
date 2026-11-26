@@ -157,6 +157,9 @@ pub fn render(
         imageops::overlay(&mut canvas, &img, x, y);
         let marks: Vec<Mark> = item.marks.iter().map(|m| item.local_mark(m)).collect();
         draw_marks(&mut canvas, (x, y, w, h), &marks, scale);
+        if watermark.perspective_lines && !item.vanishing.is_empty() {
+            draw_perspective(&mut canvas, (x, y, w, h), item, scale);
+        }
         let top = (y + h as i64) as f32 + CAPTION_GAP * scale;
         for (n, line) in caption_lines(item).iter().enumerate() {
             let line = Line::layout(&font, line, CAPTION_FONT * scale);
@@ -459,6 +462,44 @@ fn blend_rect(
                 p[c] = (color[c] as f32 * alpha + p[c] as f32 * (1.0 - alpha)).round() as u8;
             }
         }
+    }
+}
+
+/// A picture's perspective lines, as on the board: a fan from each vanishing point in its
+/// color, and the horizon.
+fn draw_perspective(canvas: &mut RgbaImage, rect: (i64, i64, u32, u32), item: &Item, scale: f32) {
+    use eframe::egui::{Pos2, Rect, pos2, vec2};
+    let (x, y, w, h) = rect;
+    let area = Rect::from_min_size(pos2(x as f32, y as f32), vec2(w as f32, h as f32));
+    let points: Vec<Pos2> = item
+        .vanishing
+        .iter()
+        .map(|p| {
+            let [lx, ly] = item.mark_to_local(*p);
+            area.min + vec2(lx, ly) * area.size()
+        })
+        .collect();
+    let lines = crate::perspective::lines(area, &points, area);
+    let thin = (1.4 * scale).clamp(1.0, 6.0);
+    let mut segment = |a: Pos2, b: Pos2, width: f32, rgb: [u8; 3]| {
+        for (radius, color, alpha) in [
+            ((width + 2.0) / 2.0, [0, 0, 0], 80.0 / 255.0),
+            (width / 2.0, rgb, 1.0),
+        ] {
+            let steps = (a.distance(b) / (radius * 0.5).max(0.5)).ceil().max(1.0) as usize;
+            for i in 0..=steps {
+                let p = a.lerp(b, i as f32 / steps as f32);
+                stamp_disc(canvas, rect, p.x, p.y, radius, color, alpha);
+            }
+        }
+    };
+    let colors = crate::perspective::COLORS;
+    for (a, b, n) in lines.rays {
+        segment(a, b, thin, colors[n % colors.len()]);
+    }
+    if let Some((a, b)) = lines.horizon {
+        // The board's blue accent.
+        segment(a, b, thin * 1.8, [90, 160, 255]);
     }
 }
 

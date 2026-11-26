@@ -1632,8 +1632,9 @@ impl CoreBoardApp {
             trf("{} selected image(s)", &[&self.selection.len()])
         };
         let mut export = false;
+        let mut contact = false;
         let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
-        egui::Window::new(tr("Export PNG"))
+        egui::Window::new(tr("Export"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -1666,6 +1667,12 @@ impl CoreBoardApp {
                     ui.add(egui::Slider::new(&mut percent, 10.0..=100.0).suffix("%"));
                     wm.opacity = percent / 100.0;
                 });
+                if self.board.items.iter().any(|i| !i.vanishing.is_empty()) {
+                    ui.checkbox(
+                        &mut self.board.watermark.perspective_lines,
+                        tr("Include perspective lines"),
+                    );
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let label = if self.exporting {
@@ -1696,10 +1703,42 @@ impl CoreBoardApp {
                         self.board.export_dir = None;
                     }
                 });
+                ui.separator();
+                ui.label(egui::RichText::new(tr("Contact sheet (PDF)")).strong());
+                ui.label(
+                    egui::RichText::new(tr(
+                        "The pictures in a neat grid with their captions, ready to print or send.",
+                    ))
+                    .small()
+                    .weak(),
+                );
+                let options = &mut self.board.contact;
+                ui.horizontal(|ui| {
+                    ui.label(tr("Per row"));
+                    for n in 2..=5 {
+                        ui.selectable_value(&mut options.columns, n, n.to_string());
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr("Paper"));
+                    egui::ComboBox::from_id_salt("contact-paper")
+                        .selected_text(options.paper.label())
+                        .show_ui(ui, |ui| {
+                            for paper in crate::contact::Paper::ALL {
+                                ui.selectable_value(&mut options.paper, paper, paper.label());
+                            }
+                        });
+                });
+                contact |= ui
+                    .add_enabled(!self.exporting, egui::Button::new(tr("Save PDF…")))
+                    .clicked();
             });
 
         if export && !self.exporting {
             self.start_export();
+            close = true;
+        }
+        if contact && !self.exporting && self.start_contact_sheet() {
             close = true;
         }
         if close {
@@ -1732,6 +1771,49 @@ impl CoreBoardApp {
                 &watermark,
             ));
         });
+    }
+
+    /// Asks where to save, then makes the contact sheet in the background. False when there
+    /// was nothing to put on it or saving was cancelled.
+    fn start_contact_sheet(&mut self) -> bool {
+        let targets = self.targets();
+        let pictures: Vec<Item> = focus::reading_order(&self.board.items)
+            .into_iter()
+            .filter(|id| targets.contains(id))
+            .filter_map(|id| self.board.items.iter().find(|i| i.id == id).cloned())
+            .collect();
+        if pictures.is_empty() {
+            self.toast(tr("Select some pictures for the contact sheet").into());
+            return false;
+        }
+        let title = boards::display_name(&self.store.dir);
+        let Some(mut out) = rfd::FileDialog::new()
+            .set_title(tr("Save contact sheet"))
+            .set_directory(self.export_dir())
+            .set_file_name(format!("{title}.pdf"))
+            .add_filter("PDF", &["pdf"])
+            .save_file()
+        else {
+            return false;
+        };
+        if out
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("pdf"))
+        {
+            out.set_extension("pdf");
+        }
+        let images_dir = self.store.dir.join("images");
+        let options = self.board.contact;
+        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let tx = self.exported_tx.clone();
+        self.exporting = true;
+        self.toast(tr("Making the contact sheet…").into());
+        std::thread::spawn(move || {
+            let result = crate::contact::save(&images_dir, &pictures, &title, &date, options, &out)
+                .map(|_| out);
+            let _ = tx.send(result);
+        });
+        true
     }
 
     fn export_dir(&self) -> std::path::PathBuf {
@@ -4023,7 +4105,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+O", "boards, updates, settings"),
             ("Ctrl+Shift+S", "save the board as one file"),
             ("Ctrl+T / Ctrl+F", "tags / search"),
-            ("Ctrl+E", "export PNG (+ watermark)"),
+            ("Ctrl+E", "export a PNG, or a PDF contact sheet"),
             ("[ / ]", "window opacity"),
             ("T", "always on top"),
             ("H", "show / hide this help"),

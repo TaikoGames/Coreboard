@@ -660,13 +660,40 @@ const SPANISH: &[(&str, &str)] = &[
         "tableros, actualizaciones, ajustes",
     ),
     ("tags / search", "etiquetas / buscar"),
-    ("export PNG (+ watermark)", "exportar PNG (+ marca de agua)"),
+    (
+        "export a PNG, or a PDF contact sheet",
+        "exportar un PNG o una hoja de contactos en PDF",
+    ),
     ("window opacity", "opacidad de la ventana"),
     ("always on top", "siempre encima"),
     ("show / hide this help", "mostrar / ocultar esta ayuda"),
     // Right-click menu
     ("Focus view", "Vista de enfoque"),
     ("Compare side by side", "Comparar lado a lado"),
+    (
+        "Include perspective lines",
+        "Incluir las líneas de perspectiva",
+    ),
+    ("Contact sheet (PDF)", "Hoja de contactos (PDF)"),
+    (
+        "The pictures in a neat grid with their captions, ready to print or send.",
+        "Las imágenes en una cuadrícula ordenada con sus pies de foto, listas para imprimir o enviar.",
+    ),
+    ("Per row", "Por fila"),
+    ("Paper", "Papel"),
+    ("Save PDF…", "Guardar PDF…"),
+    (
+        "Select some pictures for the contact sheet",
+        "Selecciona algunas imágenes para la hoja de contactos",
+    ),
+    ("Save contact sheet", "Guardar hoja de contactos"),
+    (
+        "Making the contact sheet…",
+        "Haciendo la hoja de contactos…",
+    ),
+    ("Letter", "Carta"),
+    ("{}  ·  page {} of {}", "{}  ·  página {} de {}"),
+    ("no pictures to put on it", "no hay imágenes que poner"),
     (
         "Measure: drag across something to use it as the unit (a head, say)",
         "Medir: arrastra sobre algo para usarlo como unidad (una cabeza, por ejemplo)",
@@ -850,7 +877,7 @@ const SPANISH: &[(&str, &str)] = &[
     ("Zoom 100%", "Zoom 100%"),
     ("Surprise me", "Sorpréndeme"),
     ("Boards…", "Tableros…"),
-    ("Export PNG…", "Exportar PNG…"),
+    ("Export PNG or PDF…", "Exportar PNG o PDF…"),
     ("Arrows / Shift+arrows", "Flechas / Shift+flechas"),
     ("nudge 1 / 10 points", "mover 1 / 10 puntos"),
 ];
@@ -1420,13 +1447,37 @@ const CATALAN: &[(&str, &str)] = &[
         "taulers, actualitzacions, ajustos",
     ),
     ("tags / search", "etiquetes / cercar"),
-    ("export PNG (+ watermark)", "exportar PNG (+ marca d'aigua)"),
+    (
+        "export a PNG, or a PDF contact sheet",
+        "exportar un PNG o un full de contactes en PDF",
+    ),
     ("window opacity", "opacitat de la finestra"),
     ("always on top", "sempre a sobre"),
     ("show / hide this help", "mostrar / amagar aquesta ajuda"),
     // Right-click menu
     ("Focus view", "Vista d'enfocament"),
     ("Compare side by side", "Comparar una al costat de l'altra"),
+    (
+        "Include perspective lines",
+        "Incloure les línies de perspectiva",
+    ),
+    ("Contact sheet (PDF)", "Full de contactes (PDF)"),
+    (
+        "The pictures in a neat grid with their captions, ready to print or send.",
+        "Les imatges en una graella ordenada amb els seus peus de foto, a punt per imprimir o enviar.",
+    ),
+    ("Per row", "Per fila"),
+    ("Paper", "Paper"),
+    ("Save PDF…", "Desar PDF…"),
+    (
+        "Select some pictures for the contact sheet",
+        "Selecciona algunes imatges per al full de contactes",
+    ),
+    ("Save contact sheet", "Desar el full de contactes"),
+    ("Making the contact sheet…", "Fent el full de contactes…"),
+    ("Letter", "Carta"),
+    ("{}  ·  page {} of {}", "{}  ·  pàgina {} de {}"),
+    ("no pictures to put on it", "no hi ha imatges per posar-hi"),
     (
         "Measure: drag across something to use it as the unit (a head, say)",
         "Mesurar: arrossega sobre alguna cosa per fer-la servir d'unitat (un cap, per exemple)",
@@ -1613,7 +1664,7 @@ const CATALAN: &[(&str, &str)] = &[
     ("Zoom 100%", "Zoom 100%"),
     ("Surprise me", "Sorprèn-me"),
     ("Boards…", "Taulers…"),
-    ("Export PNG…", "Exportar PNG…"),
+    ("Export PNG or PDF…", "Exportar PNG o PDF…"),
     ("Arrows / Shift+arrows", "Fletxes / Shift+fletxes"),
     ("nudge 1 / 10 points", "moure 1 / 10 punts"),
 ];
@@ -1648,6 +1699,7 @@ mod tests {
             include_str!("app/loupe.rs"),
             include_str!("app/boardfiles.rs"),
             include_str!("app/tools.rs"),
+            include_str!("contact.rs"),
             include_str!("app/sorting.rs"),
             include_str!("boardfile.rs"),
         ];
